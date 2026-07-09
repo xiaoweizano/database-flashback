@@ -1,0 +1,46 @@
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - typecheck
+    - unused
+    - misspell
+    - revive
+    - prealloc
+    - unconvert
+    - gocyclo
+  disable:
+    - exhaustruct
+    - wrapcheck
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  gofmt:
+    simplify: true
+  misspell:
+    locale: US
+
+run:
+  timeout: 3m
+  modules-download-mode: readonly
+  build-tags:
+    - integration
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gocyclo
+        - funlen
+
+output:
+  formats:
+    - format: colored-line-number
