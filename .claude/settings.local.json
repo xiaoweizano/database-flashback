@@ -62,7 +62,10 @@
       "Bash(go build *)",
       "Bash(npm ping *)",
       "Bash(npm create *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(npm cache *)",
+      "Bash(npx playwright *)",
+      "Bash(npx --yes playwright --version)"
     ]
   }
 }

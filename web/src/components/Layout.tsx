@@ -4,6 +4,8 @@ import { Layout as AntLayout, Menu, Button, theme } from 'antd';
 import {
   TeamOutlined,
   RobotOutlined,
+  HistoryOutlined,
+  FileTextOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -30,7 +32,26 @@ export default function Layout() {
       icon: <RobotOutlined />,
       label: 'Agents',
     },
+    {
+      key: '/pitr',
+      icon: <HistoryOutlined />,
+      label: 'PITR Recovery',
+    },
+    {
+      key: '/audit',
+      icon: <FileTextOutlined />,
+      label: 'Audit Log',
+    },
   ];
+
+  const getSelectedKey = () => {
+    const path = location.pathname;
+    if (path.startsWith('/pitr')) return '/pitr';
+    if (path.startsWith('/audit')) return '/audit';
+    if (path.startsWith('/agents')) return '/agents';
+    if (path.startsWith('/org')) return '/org';
+    return path;
+  };
 
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
@@ -51,7 +72,7 @@ export default function Layout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[getSelectedKey()]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
         />

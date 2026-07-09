@@ -8,6 +8,9 @@ import OrgPage from './pages/org/OrgPage';
 import OrgSettingsPage from './pages/org/OrgSettingsPage';
 import AgentListPage from './pages/agents/AgentListPage';
 import AgentDetailPage from './pages/agents/AgentDetailPage';
+import PITRWizardPage from './pages/pitr/PITRWizardPage';
+import PITRDetailPage from './pages/pitr/PITRDetailPage';
+import AuditLogPage from './pages/audit/AuditLogPage';
 
 export default function App() {
   return (
@@ -21,6 +24,9 @@ export default function App() {
           <Route path="org/settings" element={<OrgSettingsPage />} />
           <Route path="agents" element={<AgentListPage />} />
           <Route path="agents/:id" element={<AgentDetailPage />} />
+          <Route path="pitr/new" element={<PITRWizardPage />} />
+          <Route path="pitr/:id" element={<PITRDetailPage />} />
+          <Route path="audit" element={<AuditLogPage />} />
         </Route>
       </Routes>
     </AuthProvider>
