@@ -299,3 +299,63 @@ func TestConcurrentAccess(t *testing.T) {
 	assert.Equal(t, "complete", cp.Status)
 	assert.NotEmpty(t, cp.Checksum)
 }
+
+// ---------------------------------------------------------------------------
+// Crash recovery — resume from checkpoint
+// ---------------------------------------------------------------------------
+
+func TestResumeFromCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir)
+
+	// Create a checkpoint simulating partial progress (5 of 20 batches done).
+	plan := CheckpointPlan{
+		RecoveryID:   "rec-crash",
+		TableName:    "orders",
+		RecoveryTime: time.Now(),
+		TotalBatches: 20,
+		TableOrder:   []string{"users", "orders"},
+	}
+	cp, err := m.CreateCheckpoint(context.Background(), plan)
+	require.NoError(t, err)
+	assert.Equal(t, "in_progress", cp.Status)
+	assert.Equal(t, 0, cp.CompletedBatches)
+
+	// Simulate completing 5 batches before crash.
+	err = m.UpdateBatch(context.Background(), "rec-crash", 5)
+	require.NoError(t, err)
+
+	// Verify partial state.
+	cp, err = m.GetLastCheckpoint(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 5, cp.CompletedBatches)
+
+	// Simulate crash by creating a new Manager pointing at the same directory.
+	m2 := NewManager(dir)
+
+	cp2, err := m2.GetLastCheckpoint(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, cp2)
+
+	// Verify the resumed state matches.
+	assert.Equal(t, "rec-crash", cp2.RecoveryID)
+	assert.Equal(t, "orders", cp2.TableName)
+	assert.Equal(t, 20, cp2.TotalBatches)
+	assert.Equal(t, 5, cp2.CompletedBatches)
+	assert.Equal(t, "in_progress", cp2.Status)
+	assert.Equal(t, []string{"users", "orders"}, cp2.TableOrder)
+
+	// Verify we can continue from where we left off.
+	err = m2.UpdateBatch(context.Background(), "rec-crash", 10)
+	require.NoError(t, err)
+
+	err = m2.Complete(context.Background(), "rec-crash")
+	require.NoError(t, err)
+
+	cp3, err := m2.GetLastCheckpoint(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "complete", cp3.Status)
+	assert.NotEmpty(t, cp3.Checksum)
+	assert.Len(t, cp3.Checksum, 64) // SHA256 hex
+	assert.Equal(t, 10, cp3.CompletedBatches)
+}

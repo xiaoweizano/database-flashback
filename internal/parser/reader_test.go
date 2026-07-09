@@ -291,3 +291,188 @@ func TestBuildFormatDescBody(t *testing.T) {
 	// Check header length
 	assert.Equal(t, byte(19), body[56])
 }
+
+// ---------------------------------------------------------------------------
+// Edge case tests
+// ---------------------------------------------------------------------------
+
+func TestBinlogReader_EmptyBinlog(t *testing.T) {
+	// A file with only the magic number and no events.
+	f, err := os.CreateTemp("", "binlog-empty-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	writeBinlogHeader(f)
+	f.Close()
+
+	r := NewBinlogReader()
+	err = r.Open(f.Name())
+	require.NoError(t, err)
+
+	// Reading should return EOF immediately since there are no events.
+	_, _, err = r.ReadEvent()
+	assert.ErrorIs(t, err, io.EOF)
+
+	r.Close()
+}
+
+func TestBinlogReader_ReadEvent_TruncatedBody(t *testing.T) {
+	f, err := os.CreateTemp("", "binlog-truncated-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	writeBinlogHeader(f)
+
+	// Write a header that claims a body larger than the file.
+	headerBuf := make([]byte, EventHeaderSize)
+	binary.LittleEndian.PutUint32(headerBuf[0:4], 1000)          // timestamp
+	headerBuf[4] = byte(QueryEvent)                               // type
+	binary.LittleEndian.PutUint32(headerBuf[5:9], 1)              // server_id
+	binary.LittleEndian.PutUint32(headerBuf[9:13], EventHeaderSize+100) // EventLen = 19 + 100
+	binary.LittleEndian.PutUint32(headerBuf[13:17], 4+EventHeaderSize+100) // NextPos
+	binary.LittleEndian.PutUint16(headerBuf[17:19], 0)            // flags
+
+	// Write only the header and a few bytes — less than the claimed 100.
+	f.Write(headerBuf)
+	f.Write([]byte{0, 1, 2}) // only 3 bytes of body
+	f.Close()
+
+	r := NewBinlogReader()
+	err = r.Open(f.Name())
+	require.NoError(t, err)
+
+	_, _, err = r.ReadEvent()
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, io.EOF) // should be a read error, not clean EOF
+
+	r.Close()
+}
+
+func TestBinlogReader_ReadEvent_CRC32Mismatch(t *testing.T) {
+	f, err := os.CreateTemp("", "binlog-crcbad-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	writeBinlogHeader(f)
+
+	// Write a FormatDescriptionEvent without CRC first (since parse will set checksumCRC).
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	fdeNext := uint32(4 + EventHeaderSize + len(fdeBody) + 4) // +4 for CRC
+	fdeHdr := EventHeader{
+		Timestamp: 1000,
+		Type:      FormatDescriptionEvent,
+		ServerID:  1,
+		NextPos:   fdeNext,
+	}
+	// Write FDE with CRC (for the FDE itself the CRC is correct).
+	writeEvent(f, fdeHdr, fdeBody, true)
+
+	// Write an event with correct body but WRONG CRC.
+	qBody := []byte("DELETE FROM t1")
+	qNext := fdeNext + uint32(EventHeaderSize+len(qBody)+4)
+	qHdr := EventHeader{
+		Timestamp: 1001,
+		Type:      QueryEvent,
+		ServerID:  1,
+		NextPos:   qNext,
+	}
+
+	// Write event header.
+	buf := make([]byte, EventHeaderSize)
+	binary.LittleEndian.PutUint32(buf[0:4], qHdr.Timestamp)
+	buf[4] = byte(qHdr.Type)
+	binary.LittleEndian.PutUint32(buf[5:9], qHdr.ServerID)
+	totalLen := uint32(EventHeaderSize + len(qBody) + 4)
+	qHdr.EventLen = totalLen
+	binary.LittleEndian.PutUint32(buf[9:13], qHdr.EventLen)
+	binary.LittleEndian.PutUint32(buf[13:17], qHdr.NextPos)
+	binary.LittleEndian.PutUint16(buf[17:19], qHdr.Flags)
+	f.Write(buf)
+	f.Write(qBody)
+	// Write a deliberately wrong CRC.
+	wrongCRC := make([]byte, 4)
+	binary.LittleEndian.PutUint32(wrongCRC, 0xDEADBEEF)
+	f.Write(wrongCRC)
+	f.Close()
+
+	r := NewBinlogReader()
+	err = r.Open(f.Name())
+	require.NoError(t, err)
+
+	// Read FDE first (CRC is enabled by the FDE).
+	hdr, _, err := r.ReadEvent()
+	require.NoError(t, err)
+	assert.Equal(t, FormatDescriptionEvent, hdr.Type)
+
+	// Enable CRC for subsequent reads.
+	r.EnableChecksum()
+
+	// Attempt to read the query event with bad CRC.
+	_, _, err = r.ReadEvent()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CRC32 mismatch")
+
+	r.Close()
+}
+
+func TestBinlogReader_ReadEvent_UnknownEventType(t *testing.T) {
+	f, err := os.CreateTemp("", "binlog-unknown-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	writeBinlogHeader(f)
+
+	// Write an event with type code 99 (unknown/unused).
+	body := []byte("some payload")
+	nextPos := uint32(4 + EventHeaderSize + len(body))
+	hdr := EventHeader{
+		Timestamp: 2000,
+		Type:      EventType(99), // unknown type
+		ServerID:  1,
+		NextPos:   nextPos,
+	}
+	writeEvent(f, hdr, body, false)
+	f.Close()
+
+	r := NewBinlogReader()
+	err = r.Open(f.Name())
+	require.NoError(t, err)
+
+	hdr, payload, err := r.ReadEvent()
+	require.NoError(t, err)
+	assert.Equal(t, EventType(99), hdr.Type)
+	assert.Equal(t, "EVENT(99)", hdr.Type.String())
+	assert.Equal(t, body, payload)
+	assert.Equal(t, nextPos, r.Position())
+
+	r.Close()
+}
+
+func TestBinlogReader_ReadEvent_InvalidEventLen(t *testing.T) {
+	f, err := os.CreateTemp("", "binlog-badlen-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	writeBinlogHeader(f)
+
+	// Write a header with EventLen < EventHeaderSize.
+	headerBuf := make([]byte, EventHeaderSize)
+	binary.LittleEndian.PutUint32(headerBuf[0:4], 1000)
+	headerBuf[4] = byte(QueryEvent)
+	binary.LittleEndian.PutUint32(headerBuf[5:9], 1)
+	binary.LittleEndian.PutUint32(headerBuf[9:13], 10)          // EventLen = 10 (< 19)
+	binary.LittleEndian.PutUint32(headerBuf[13:17], 4+10)
+	binary.LittleEndian.PutUint16(headerBuf[17:19], 0)
+	f.Write(headerBuf)
+	f.Close()
+
+	r := NewBinlogReader()
+	err = r.Open(f.Name())
+	require.NoError(t, err)
+
+	_, _, err = r.ReadEvent()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid length")
+
+	r.Close()
+}

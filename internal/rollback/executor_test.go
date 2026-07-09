@@ -476,3 +476,29 @@ func TestEstimateBytes(t *testing.T) {
 	assert.Equal(t, int64(5), estimateBytes([]string{"hello"}))
 	assert.Equal(t, int64(10), estimateBytes([]string{"hello", "world"}))
 }
+
+// ---------------------------------------------------------------------------
+// Zero batch size (use default)
+// ---------------------------------------------------------------------------
+
+func TestExecute_ZeroBatchSizeUsesDefault(t *testing.T) {
+	e, mock := newMockExecutor(t)
+
+	// With BatchSize=0, the executor should default to 1000. Create enough
+	// statements to spill into two batches if batch size were 1 — with the
+	// default of 1000 everything fits in one batch.
+	mock.ExpectBegin()
+	mock.ExpectExec("stmt1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("stmt2").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := e.Execute(context.Background(),
+		[]string{"stmt1", "stmt2"},
+		ExecOptions{BatchSize: 0}) // zero → default
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.BatchesTotal)
+	assert.Equal(t, 1, result.BatchesComplete)
+	assert.Equal(t, int64(2), result.RowsAffected)
+	assert.Empty(t, result.Errors)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
