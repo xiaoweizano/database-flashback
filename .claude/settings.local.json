@@ -67,7 +67,8 @@
       "Bash(npx playwright *)",
       "Bash(npx --yes playwright --version)",
       "Bash(chmod +x *)",
-      "Bash(docker --version)"
+      "Bash(docker --version)",
+      "Bash(gh --version)"
     ]
   }
 }
