@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/a-shan/mysql-pitr/internal/connector"
 	"github.com/stretchr/testify/assert"
@@ -228,8 +229,10 @@ func TestBinlogParser_Integration_Insert(t *testing.T) {
 	defer p.Close()
 
 	p.SetSkipChecksum(true) // test binlog has no CRC
-	events, err := p.ParseFiles([]string{path})
+	result, err := p.ParseFiles([]string{path}, ParseOptions{})
 	require.NoError(t, err)
+	require.NotNil(t, result)
+	events := result.Events
 	require.Len(t, events, 1)
 
 	ev := events[0]
@@ -254,8 +257,10 @@ func TestBinlogParser_Integration_Update(t *testing.T) {
 	defer p.Close()
 
 	p.SetSkipChecksum(true)
-	events, err := p.ParseFiles([]string{path})
+	result, err := p.ParseFiles([]string{path}, ParseOptions{})
 	require.NoError(t, err)
+	require.NotNil(t, result)
+	events := result.Events
 	require.Len(t, events, 1)
 
 	ev := events[0]
@@ -274,8 +279,10 @@ func TestBinlogParser_Integration_Delete(t *testing.T) {
 	defer p.Close()
 
 	p.SetSkipChecksum(true)
-	events, err := p.ParseFiles([]string{path})
+	result, err := p.ParseFiles([]string{path}, ParseOptions{})
 	require.NoError(t, err)
+	require.NotNil(t, result)
+	events := result.Events
 	require.Len(t, events, 1)
 
 	ev := events[0]
@@ -335,8 +342,10 @@ func TestBinlogParser_Integration_MultipleRows(t *testing.T) {
 	defer p.Close()
 
 	p.SetSkipChecksum(true)
-	events, err := p.ParseFiles([]string{f.Name()})
+	result, err := p.ParseFiles([]string{f.Name()}, ParseOptions{})
 	require.NoError(t, err)
+	require.NotNil(t, result)
+	events := result.Events
 	require.Len(t, events, 3)
 	for i, ev := range events {
 		assert.Equal(t, connector.InsertEvent, ev.Type)
@@ -351,7 +360,7 @@ func TestBinlogParser_Integration_MultipleRows(t *testing.T) {
 
 func TestBinlogParser_Integration_FileNotFound(t *testing.T) {
 	p := NewBinlogParser()
-	_, err := p.ParseFiles([]string{"/nonexistent/binlog.000001"})
+	_, err := p.ParseFiles([]string{"/nonexistent/binlog.000001"}, ParseOptions{})
 	assert.Error(t, err)
 }
 
@@ -368,9 +377,10 @@ func TestBinlogParser_Integration_EmptyEvents(t *testing.T) {
 
 	// Only header, no events - should return empty
 	p.SetSkipChecksum(true)
-	events, err := p.ParseFiles([]string{f.Name()})
+	result, err := p.ParseFiles([]string{f.Name()}, ParseOptions{})
 	require.NoError(t, err)
-	assert.Empty(t, events)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Events)
 }
 
 func TestBinlogParser_Integration_SkipNonRowEvents(t *testing.T) {
@@ -424,8 +434,10 @@ func TestBinlogParser_Integration_SkipNonRowEvents(t *testing.T) {
 	defer p.Close()
 
 	p.SetSkipChecksum(true)
-	events, err := p.ParseFiles([]string{f.Name()})
+	result, err := p.ParseFiles([]string{f.Name()}, ParseOptions{})
 	require.NoError(t, err)
+	require.NotNil(t, result)
+	events := result.Events
 	require.Len(t, events, 1)
 	assert.Equal(t, connector.InsertEvent, events[0].Type)
 }
@@ -469,4 +481,560 @@ func TestBinlogParser_OpenCloseCycle(t *testing.T) {
 	// Re-open same file should work
 	err = p.Open(f.Name())
 	require.NoError(t, err)
+}
+
+// ============================================================
+// DDL Detection Tests
+// ============================================================
+
+// buildQueryPayload constructs a QueryEvent payload for testing.
+// Format: post-header (13 bytes) + status vars + db name + null + sql
+func buildQueryPayload(threadID uint32, execTime uint32, dbName, sql string) []byte {
+	payload := make([]byte, 13)
+	binary.LittleEndian.PutUint32(payload[0:4], threadID)
+	binary.LittleEndian.PutUint32(payload[4:8], execTime)
+	payload[8] = byte(len(dbName))
+	// error_code at [9:11] = 0
+	// status_vars_length at [11:13] = 0
+	binary.LittleEndian.PutUint16(payload[11:13], 0)
+
+	// Database name + null terminator
+	payload = append(payload, []byte(dbName)...)
+	payload = append(payload, 0x00)
+
+	// SQL text
+	payload = append(payload, []byte(sql)...)
+
+	return payload
+}
+
+func TestDDLDetection_AlterTable(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-ddl-alter-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 1000, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	// QueryEvent: ALTER TABLE
+	sql := "ALTER TABLE `orders` ADD COLUMN `status` VARCHAR(20) DEFAULT 'pending'"
+	qPayload := buildQueryPayload(1, 0, "testdb", sql)
+	qNext := pos + uint32(EventHeaderSize+len(qPayload))
+	writeEvent(f, EventHeader{Timestamp: 1001, Type: QueryEvent, ServerID: 1, NextPos: qNext}, qPayload, false)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	result, err := p.ParseFiles([]string{f.Name()}, ParseOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Should detect the DDL event
+	ddlEvents := p.DDLEvents()
+	require.Len(t, ddlEvents, 1, "should detect one DDL event")
+
+	ddl := ddlEvents[0]
+	assert.Equal(t, int64(1001), ddl.Timestamp.Unix(), "DDL timestamp")
+	assert.Contains(t, ddl.Statement, "ALTER TABLE", "DDL statement")
+	assert.Equal(t, "TABLE", ddl.ObjectType, "DDL object type")
+	assert.Equal(t, "testdb.orders", ddl.ObjectName, "DDL object name")
+	assert.True(t, ddl.Position > 0, "DDL position should be non-zero")
+
+	// Should not produce any row events
+	assert.Empty(t, result.Events, "no row events expected for DDL-only binlog")
+}
+
+func TestDDLDetection_CreateTable(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-ddl-create-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 1000, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	// QueryEvent: CREATE TABLE
+	sql := "CREATE TABLE `users` (\n  `id` INT NOT NULL,\n  `name` VARCHAR(100),\n  PRIMARY KEY (`id`)\n)"
+	qPayload := buildQueryPayload(1, 0, "shopdb", sql)
+	qNext := pos + uint32(EventHeaderSize+len(qPayload))
+	writeEvent(f, EventHeader{Timestamp: 1002, Type: QueryEvent, ServerID: 1, NextPos: qNext}, qPayload, false)
+	pos = qNext
+
+	// QueryEvent: DROP TABLE
+	dropSQL := "DROP TABLE IF EXISTS `temp_data`"
+	qPayload2 := buildQueryPayload(1, 0, "shopdb", dropSQL)
+	qNext2 := pos + uint32(EventHeaderSize+len(qPayload2))
+	writeEvent(f, EventHeader{Timestamp: 1003, Type: QueryEvent, ServerID: 1, NextPos: qNext2}, qPayload2, false)
+	pos = qNext2
+
+	// QueryEvent: TRUNCATE TABLE (not a DDL for our purposes but tests truncate)
+	truncSQL := "TRUNCATE TABLE `audit_log`"
+	qPayload3 := buildQueryPayload(1, 0, "shopdb", truncSQL)
+	qNext3 := pos + uint32(EventHeaderSize+len(qPayload3))
+	writeEvent(f, EventHeader{Timestamp: 1004, Type: QueryEvent, ServerID: 1, NextPos: qNext3}, qPayload3, false)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	result, err := p.ParseFiles([]string{f.Name()}, ParseOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	ddlEvents := p.DDLEvents()
+	require.Len(t, ddlEvents, 3, "should detect three DDL events")
+
+	// Check CREATE TABLE
+	assert.Equal(t, int64(1002), ddlEvents[0].Timestamp.Unix(), "CREATE timestamp")
+	assert.Contains(t, ddlEvents[0].Statement, "CREATE TABLE")
+	assert.Equal(t, "TABLE", ddlEvents[0].ObjectType)
+	assert.Equal(t, "shopdb.users", ddlEvents[0].ObjectName)
+
+	// Check DROP TABLE
+	assert.Equal(t, int64(1003), ddlEvents[1].Timestamp.Unix(), "DROP timestamp")
+	assert.Contains(t, ddlEvents[1].Statement, "DROP TABLE")
+	assert.Equal(t, "TABLE", ddlEvents[1].ObjectType)
+	assert.Equal(t, "shopdb.temp_data", ddlEvents[1].ObjectName)
+
+	// Check TRUNCATE TABLE
+	assert.Equal(t, int64(1004), ddlEvents[2].Timestamp.Unix(), "TRUNCATE timestamp")
+	assert.Contains(t, ddlEvents[2].Statement, "TRUNCATE")
+	assert.Equal(t, "TABLE", ddlEvents[2].ObjectType)
+	assert.Equal(t, "shopdb.audit_log", ddlEvents[2].ObjectName)
+
+	assert.Empty(t, result.Events)
+}
+
+func TestIsDDL(t *testing.T) {
+	tests := []struct {
+		sql  string
+		want bool
+	}{
+		{"ALTER TABLE foo ADD COLUMN x INT", true},
+		{"CREATE TABLE foo (id INT)", true},
+		{"DROP TABLE foo", true},
+		{"TRUNCATE TABLE foo", true},
+		{"RENAME TABLE foo TO bar", true},
+		{"ALTER DATABASE db CHARACTER SET utf8", true},
+		{"CREATE DATABASE db", true},
+		{"DROP DATABASE db", true},
+		{"SELECT * FROM foo", false},
+		{"INSERT INTO foo VALUES (1)", false},
+		{"UPDATE foo SET x=1", false},
+		{"DELETE FROM foo", false},
+		{"BEGIN", false},
+		{"COMMIT", false},
+		{"SET @a=1", false},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, isDDL(tc.sql), "isDDL(%q)", tc.sql)
+	}
+}
+
+func TestExtractDDLInfo(t *testing.T) {
+	tests := []struct {
+		sql        string
+		db         string
+		wantType   string
+		wantName   string
+	}{
+		{"ALTER TABLE users ADD COLUMN x INT", "testdb", "TABLE", "testdb.users"},
+		{"ALTER TABLE `users` ADD COLUMN x INT", "testdb", "TABLE", "testdb.users"},
+		{"ALTER TABLE `db`.`users` ADD COLUMN x INT", "testdb", "TABLE", "db.users"},
+		{"CREATE TABLE orders (id INT)", "shop", "TABLE", "shop.orders"},
+		{"CREATE TABLE `backtick`.`table` (id INT)", "shop", "TABLE", "backtick.table"},
+		{"DROP TABLE IF EXISTS temp", "test", "TABLE", "test.temp"},
+		{"CREATE DATABASE newdb", "", "DATABASE", "newdb"},
+		{"ALTER DATABASE db CHARACTER SET utf8", "", "DATABASE", "db"},
+		{"DROP DATABASE IF EXISTS olddb", "", "DATABASE", "olddb"},
+		{"TRUNCATE TABLE audit", "testdb", "TABLE", "testdb.audit"},
+		{"RENAME TABLE old_name TO new_name", "testdb", "TABLE", "testdb.old_name"},
+		{"SELECT * FROM foo", "", "", ""},
+	}
+	for _, tc := range tests {
+		objType, objName := extractDDLInfo(tc.sql, tc.db)
+		assert.Equal(t, tc.wantType, objType, "extractDDLInfo(%q).type", tc.sql)
+		assert.Equal(t, tc.wantName, objName, "extractDDLInfo(%q).name", tc.sql)
+	}
+}
+
+// ============================================================
+// Time-Range Filter Tests
+// ============================================================
+
+func TestTimeFilter_ExcludeOutsideRange(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-time-exclude-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE at t=0
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 0, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	// Transaction at t=100: TableMap + WriteRows (1 row)
+	colTypes := []byte{MYSQL_TYPE_LONG}
+	colMeta := []byte{0x00}
+	tmPayload := buildTableMapPayload(10, "testdb", "events", colTypes, colMeta, []byte{0x00})
+	tmNext := pos + uint32(EventHeaderSize+len(tmPayload))
+	writeEvent(f, EventHeader{Timestamp: 100, Type: TableMapEvent, ServerID: 1, NextPos: tmNext}, tmPayload, false)
+	pos = tmNext
+
+	wrPayload := make([]byte, 8)
+	wrPayload[0] = 10
+	wrPayload[6] = 0
+	wrPayload[7] = 0
+	wrPayload = append(wrPayload, 0x01)                     // col count
+	wrPayload = append(wrPayload, 0x01)                     // present bitmap
+	wrPayload = append(wrPayload, 0x00)                     // null bitmap
+	wrPayload = append(wrPayload, 0x01, 0x00, 0x00, 0x00) // value 1
+	wrNext := pos + uint32(EventHeaderSize+len(wrPayload))
+	writeEvent(f, EventHeader{Timestamp: 100, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext}, wrPayload, false)
+	pos = wrNext
+
+	// Transaction at t=200: TableMap + WriteRows
+	tmPayload2 := buildTableMapPayload(20, "testdb", "events", colTypes, colMeta, []byte{0x00})
+	tmNext2 := pos + uint32(EventHeaderSize+len(tmPayload2))
+	writeEvent(f, EventHeader{Timestamp: 200, Type: TableMapEvent, ServerID: 1, NextPos: tmNext2}, tmPayload2, false)
+	pos = tmNext2
+
+	wrPayload2 := make([]byte, 8)
+	wrPayload2[0] = 20
+	wrPayload2[6] = 0
+	wrPayload2[7] = 0
+	wrPayload2 = append(wrPayload2, 0x01)
+	wrPayload2 = append(wrPayload2, 0x01)
+	wrPayload2 = append(wrPayload2, 0x00)
+	wrPayload2 = append(wrPayload2, 0x02, 0x00, 0x00, 0x00) // value 2
+	wrNext2 := pos + uint32(EventHeaderSize+len(wrPayload2))
+	writeEvent(f, EventHeader{Timestamp: 200, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext2}, wrPayload2, false)
+	pos = wrNext2
+
+	// Transaction at t=300: TableMap + WriteRows
+	tmPayload3 := buildTableMapPayload(30, "testdb", "events", colTypes, colMeta, []byte{0x00})
+	tmNext3 := pos + uint32(EventHeaderSize+len(tmPayload3))
+	writeEvent(f, EventHeader{Timestamp: 300, Type: TableMapEvent, ServerID: 1, NextPos: tmNext3}, tmPayload3, false)
+	pos = tmNext3
+
+	wrPayload3 := make([]byte, 8)
+	wrPayload3[0] = 30
+	wrPayload3[6] = 0
+	wrPayload3[7] = 0
+	wrPayload3 = append(wrPayload3, 0x01)
+	wrPayload3 = append(wrPayload3, 0x01)
+	wrPayload3 = append(wrPayload3, 0x00)
+	wrPayload3 = append(wrPayload3, 0x03, 0x00, 0x00, 0x00) // value 3
+	wrNext3 := pos + uint32(EventHeaderSize+len(wrPayload3))
+	writeEvent(f, EventHeader{Timestamp: 300, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext3}, wrPayload3, false)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	// Filter: only events with timestamps 150-250
+	opts := ParseOptions{
+		StartTime: time.Unix(150, 0).UTC(),
+		EndTime:   time.Unix(250, 0).UTC(),
+	}
+	result, err := p.ParseFiles([]string{f.Name()}, opts)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Only the t=200 event should be within range
+	require.Len(t, result.Events, 1, "only one event should be within time range 150-250")
+	assert.Equal(t, connector.InsertEvent, result.Events[0].Type)
+	assert.Equal(t, int64(200), result.Events[0].Timestamp.Unix())
+}
+
+func TestTimeFilter_PartialRange(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-time-partial-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 0, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	colTypes := []byte{MYSQL_TYPE_LONG}
+	colMeta := []byte{0x00}
+
+	// Helper: add a transaction with a TableMap + WriteRows at the given timestamp and tableID
+	addTransaction := func(ts uint32, tableID uint64) {
+		tmPayload := buildTableMapPayload(tableID, "db", "t", colTypes, colMeta, []byte{0x00})
+		tmNext := pos + uint32(EventHeaderSize+len(tmPayload))
+		writeEvent(f, EventHeader{Timestamp: ts, Type: TableMapEvent, ServerID: 1, NextPos: tmNext}, tmPayload, false)
+		pos = tmNext
+
+		wrPayload := make([]byte, 8)
+		wrPayload[0] = byte(tableID)
+		wrPayload[6] = 0
+		wrPayload[7] = 0
+		wrPayload = append(wrPayload, 0x01)
+		wrPayload = append(wrPayload, 0x01)
+		wrPayload = append(wrPayload, 0x00)
+		wrPayload = append(wrPayload, byte(ts), 0x00, 0x00, 0x00)
+		wrNext := pos + uint32(EventHeaderSize+len(wrPayload))
+		writeEvent(f, EventHeader{Timestamp: ts, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext}, wrPayload, false)
+		pos = wrNext
+	}
+
+	// Three transactions at different timestamps
+	addTransaction(100, 1)
+	addTransaction(200, 2)
+	addTransaction(300, 3)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	// Filter: only the middle transaction
+	opts := ParseOptions{
+		StartTime: time.Unix(150, 0).UTC(),
+		EndTime:   time.Unix(250, 0).UTC(),
+	}
+	result, err := p.ParseFiles([]string{f.Name()}, opts)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Len(t, result.Events, 1, "only the t=200 event should be within range")
+	assert.Equal(t, int64(200), result.Events[0].Timestamp.Unix())
+
+	// Verify total rows count
+	assert.Equal(t, int64(1), result.TotalRows)
+}
+
+// ============================================================
+// Table Filter Tests
+// ============================================================
+
+func TestTableFilter_SpecificTable(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-table-filter-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 1000, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	colTypes := []byte{MYSQL_TYPE_LONG}
+	colMeta := []byte{0x00}
+
+	// TableMap + WriteRows for testdb.users
+	tm1 := buildTableMapPayload(100, "testdb", "users", colTypes, colMeta, []byte{0x00})
+	tmNext1 := pos + uint32(EventHeaderSize+len(tm1))
+	writeEvent(f, EventHeader{Timestamp: 1001, Type: TableMapEvent, ServerID: 1, NextPos: tmNext1}, tm1, false)
+	pos = tmNext1
+
+	wr1 := make([]byte, 8)
+	wr1[0] = 100
+	wr1[6] = 0
+	wr1[7] = 0
+	wr1 = append(wr1, 0x01)
+	wr1 = append(wr1, 0x01)
+	wr1 = append(wr1, 0x00)
+	wr1 = append(wr1, 0x01, 0x00, 0x00, 0x00) // value 1
+	wrNext1 := pos + uint32(EventHeaderSize+len(wr1))
+	writeEvent(f, EventHeader{Timestamp: 1001, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext1}, wr1, false)
+	pos = wrNext1
+
+	// TableMap + WriteRows for testdb.orders
+	tm2 := buildTableMapPayload(200, "testdb", "orders", colTypes, colMeta, []byte{0x00})
+	tmNext2 := pos + uint32(EventHeaderSize+len(tm2))
+	writeEvent(f, EventHeader{Timestamp: 1002, Type: TableMapEvent, ServerID: 1, NextPos: tmNext2}, tm2, false)
+	pos = tmNext2
+
+	wr2 := make([]byte, 8)
+	wr2[0] = 200
+	wr2[6] = 0
+	wr2[7] = 0
+	wr2 = append(wr2, 0x01)
+	wr2 = append(wr2, 0x01)
+	wr2 = append(wr2, 0x00)
+	wr2 = append(wr2, 0x02, 0x00, 0x00, 0x00) // value 2
+	wrNext2 := pos + uint32(EventHeaderSize+len(wr2))
+	writeEvent(f, EventHeader{Timestamp: 1002, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext2}, wr2, false)
+	pos = wrNext2
+
+	// TableMap + WriteRows for testdb.products (should be filtered out)
+	tm3 := buildTableMapPayload(300, "testdb", "products", colTypes, colMeta, []byte{0x00})
+	tmNext3 := pos + uint32(EventHeaderSize+len(tm3))
+	writeEvent(f, EventHeader{Timestamp: 1003, Type: TableMapEvent, ServerID: 1, NextPos: tmNext3}, tm3, false)
+	pos = tmNext3
+
+	wr3 := make([]byte, 8)
+	wr3[0] = 300
+	wr3[6] = 0
+	wr3[7] = 0
+	wr3 = append(wr3, 0x01)
+	wr3 = append(wr3, 0x01)
+	wr3 = append(wr3, 0x00)
+	wr3 = append(wr3, 0x03, 0x00, 0x00, 0x00) // value 3
+	wrNext3 := pos + uint32(EventHeaderSize+len(wr3))
+	writeEvent(f, EventHeader{Timestamp: 1003, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNext3}, wr3, false)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	// Filter: only testdb.orders
+	opts := ParseOptions{
+		TargetTable: "testdb.orders",
+	}
+	result, err := p.ParseFiles([]string{f.Name()}, opts)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Len(t, result.Events, 1, "only one event for testdb.orders")
+	assert.Equal(t, "testdb", result.Events[0].Database)
+	assert.Equal(t, "orders", result.Events[0].Table)
+	assert.Equal(t, int64(2), result.Events[0].After["col_0"])
+}
+
+// ============================================================
+// Combined Filter Tests
+// ============================================================
+
+func TestCombinedFilter_DDLTimeTable(t *testing.T) {
+	f, err := os.CreateTemp("", "pitr-combined-*.bin")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	writeBinlogHeader(f)
+	pos := uint32(4)
+
+	// FDE
+	fdeBody := buildFormatDescBody(4, "8.0.33\x00", make([]byte, 35))
+	fdeNext := pos + uint32(EventHeaderSize+len(fdeBody))
+	writeEvent(f, EventHeader{Timestamp: 1000, Type: FormatDescriptionEvent, ServerID: 1, NextPos: fdeNext}, fdeBody, false)
+	pos = fdeNext
+
+	// DDL at t=1001: ALTER TABLE testdb.users (within range: 995-1005)
+	ddlSQL := "ALTER TABLE `users` ADD COLUMN `age` INT"
+	qPayload := buildQueryPayload(1, 0, "testdb", ddlSQL)
+	qNext := pos + uint32(EventHeaderSize+len(qPayload))
+	writeEvent(f, EventHeader{Timestamp: 1001, Type: QueryEvent, ServerID: 1, NextPos: qNext}, qPayload, false)
+	pos = qNext
+
+	colTypes := []byte{MYSQL_TYPE_LONG}
+	colMeta := []byte{0x00}
+
+	// TableMap + WriteRows for testdb.users at t=1002 (within range)
+	tmUsers := buildTableMapPayload(100, "testdb", "users", colTypes, colMeta, []byte{0x00})
+	tmNextUsers := pos + uint32(EventHeaderSize+len(tmUsers))
+	writeEvent(f, EventHeader{Timestamp: 1002, Type: TableMapEvent, ServerID: 1, NextPos: tmNextUsers}, tmUsers, false)
+	pos = tmNextUsers
+
+	wrUsers := make([]byte, 8)
+	wrUsers[0] = 100
+	wrUsers[6] = 0
+	wrUsers[7] = 0
+	wrUsers = append(wrUsers, 0x01)
+	wrUsers = append(wrUsers, 0x01)
+	wrUsers = append(wrUsers, 0x00)
+	wrUsers = append(wrUsers, 0x2A, 0x00, 0x00, 0x00) // value 42
+	wrNextUsers := pos + uint32(EventHeaderSize+len(wrUsers))
+	writeEvent(f, EventHeader{Timestamp: 1002, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNextUsers}, wrUsers, false)
+	pos = wrNextUsers
+
+	// TableMap + WriteRows for testdb.orders at t=1003 (within range but wrong table)
+	tmOrders := buildTableMapPayload(200, "testdb", "orders", colTypes, colMeta, []byte{0x00})
+	tmNextOrders := pos + uint32(EventHeaderSize+len(tmOrders))
+	writeEvent(f, EventHeader{Timestamp: 1003, Type: TableMapEvent, ServerID: 1, NextPos: tmNextOrders}, tmOrders, false)
+	pos = tmNextOrders
+
+	wrOrders := make([]byte, 8)
+	wrOrders[0] = 200
+	wrOrders[6] = 0
+	wrOrders[7] = 0
+	wrOrders = append(wrOrders, 0x01)
+	wrOrders = append(wrOrders, 0x01)
+	wrOrders = append(wrOrders, 0x00)
+	wrOrders = append(wrOrders, 0x2B, 0x00, 0x00, 0x00) // value 43
+	wrNextOrders := pos + uint32(EventHeaderSize+len(wrOrders))
+	writeEvent(f, EventHeader{Timestamp: 1003, Type: WriteRowsEventV1, ServerID: 1, NextPos: wrNextOrders}, wrOrders, false)
+
+	p := NewBinlogParser()
+	defer p.Close()
+	p.SetSkipChecksum(true)
+
+	// Combined filter: time range 995-1005 and only testdb.users
+	opts := ParseOptions{
+		StartTime:   time.Unix(995, 0).UTC(),
+		EndTime:     time.Unix(1005, 0).UTC(),
+		TargetTable: "testdb.users",
+	}
+	result, err := p.ParseFiles([]string{f.Name()}, opts)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Should have 1 row event for testdb.users (testdb.orders filtered by table)
+	require.Len(t, result.Events, 1, "only testdb.users events should be returned")
+	assert.Equal(t, "testdb", result.Events[0].Database)
+	assert.Equal(t, "users", result.Events[0].Table)
+
+	// Should have 1 DDL event (within time range)
+	ddlEvents := p.DDLEvents()
+	require.Len(t, ddlEvents, 1, "should detect DDL within time range")
+	assert.Equal(t, "testdb.users", ddlEvents[0].ObjectName)
+	assert.Equal(t, "ALTER TABLE `users` ADD COLUMN `age` INT", ddlEvents[0].Statement)
+}
+
+func TestDDLEvents_Accessor(t *testing.T) {
+	p := NewBinlogParser()
+	ddl := p.DDLEvents()
+	assert.NotNil(t, ddl, "DDLEvents() should never return nil")
+	assert.Empty(t, ddl, "new parser should have no DDL events")
+}
+
+func TestExtractIdentifier(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"users", "users"},
+		{"`users`", "users"},
+		{"`db`.`table`", "db.table"},
+		{"db.table", "db.table"},
+		{"orders ADD COLUMN", "orders"},
+		{"", ""},
+		{"   ", ""},
+		{"`db`.`table`;", "db.table"},
+		{"IF EXISTS", "IF"},
+		{"`weird``name`", "weird`name"},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, extractIdentifier(tc.input), "extractIdentifier(%q)", tc.input)
+	}
 }

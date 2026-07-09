@@ -1,25 +1,44 @@
 package parser
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/a-shan/mysql-pitr/internal/connector"
 )
 
+// DDLEvent represents a DDL statement detected in the binlog stream.
+type DDLEvent struct {
+	Timestamp  time.Time
+	Statement  string // Full SQL of the DDL
+	ObjectType string // "TABLE", "DATABASE"
+	ObjectName string // Fully qualified name if TABLE
+	Position   uint32 // Binlog position (start offset of the event)
+}
+
+// ParseOptions controls binlog parsing behavior such as time-range
+// and table filtering.
+type ParseOptions struct {
+	StartTime   time.Time
+	EndTime     time.Time
+	TargetTable string // schema.table format, e.g. "mydb.orders"
+}
+
 // BinlogParser orchestrates the parsing of MySQL binlog files.
 // It reads events sequentially, maintains a TableMapRegistry, and produces
 // connector.RowEvent structs suitable for flashback operations.
 type BinlogParser struct {
-	reader  *BinlogReader
-	reg     *TableMapRegistry
-	rp      *RowEventParser
-	events  []connector.RowEvent
-	// When true, checksums from FDE are enabled.
+	reader          *BinlogReader
+	reg             *TableMapRegistry
+	rp              *RowEventParser
+	events          []connector.RowEvent
 	checksumEnabled bool
-	// When true, skip CRC32 verification (for testing, or older binlogs).
-	skipChecksum bool
+	skipChecksum    bool
+	ddlEvents       []DDLEvent
+	opts            ParseOptions
 }
 
 // NewBinlogParser creates a new BinlogParser.
@@ -30,6 +49,11 @@ func NewBinlogParser() *BinlogParser {
 		reg:    reg,
 		rp:     NewRowEventParser(reg),
 	}
+}
+
+// DDLEvents returns any DDL events detected during the last ParseFiles call.
+func (p *BinlogParser) DDLEvents() []DDLEvent {
+	return p.ddlEvents
 }
 
 // Open opens a binlog file and validates the magic number.
@@ -73,6 +97,23 @@ func (p *BinlogParser) Parse() ([]connector.RowEvent, error) {
 				p.reader.Position(), err)
 		}
 
+		// Time-range filtering: skip events before StartTime.
+		// Always process FormatDescriptionEvent for checksum detection.
+		if !p.opts.StartTime.IsZero() && hdr.Type != FormatDescriptionEvent {
+			ts := time.Unix(int64(hdr.Timestamp), 0).UTC()
+			if ts.Before(p.opts.StartTime) {
+				continue
+			}
+		}
+
+		// Time-range filtering: stop after EndTime
+		if !p.opts.EndTime.IsZero() {
+			ts := time.Unix(int64(hdr.Timestamp), 0).UTC()
+			if ts.After(p.opts.EndTime) {
+				break
+			}
+		}
+
 		if err := p.dispatch(hdr, payload); err != nil {
 			return p.events, fmt.Errorf("dispatch event type %s at position %d: %w",
 				hdr.Type.String(), p.reader.Position(), err)
@@ -85,13 +126,17 @@ func (p *BinlogParser) Parse() ([]connector.RowEvent, error) {
 // ParseFiles opens and parses multiple binlog files sequentially.
 // The first file's magic number is validated; subsequent files are expected to
 // start with the magic number (validated automatically by Open).
-// Returns all row events found across all files.
-func (p *BinlogParser) ParseFiles(paths []string) ([]connector.RowEvent, error) {
+// It applies the provided ParseOptions for time-range and table filtering.
+func (p *BinlogParser) ParseFiles(paths []string, opts ParseOptions) (*connector.ParseResult, error) {
+	p.opts = opts
+	p.ddlEvents = nil
+
 	var allEvents []connector.RowEvent
 
 	for i, path := range paths {
 		if err := p.Open(path); err != nil {
-			return allEvents, fmt.Errorf("open file %s: %w", path, err)
+			return &connector.ParseResult{Events: allEvents, TotalRows: int64(len(allEvents))},
+				fmt.Errorf("open file %s: %w", path, err)
 		}
 
 		events, err := p.Parse()
@@ -99,7 +144,7 @@ func (p *BinlogParser) ParseFiles(paths []string) ([]connector.RowEvent, error) 
 			// If this is the last file and there was an error, return partial
 			if i == len(paths)-1 {
 				p.Close()
-				return allEvents, err
+				return &connector.ParseResult{Events: allEvents, TotalRows: int64(len(allEvents))}, err
 			}
 			// For intermediate files, log and continue
 		}
@@ -113,7 +158,10 @@ func (p *BinlogParser) ParseFiles(paths []string) ([]connector.RowEvent, error) 
 		p.checksumEnabled = false
 	}
 
-	return allEvents, nil
+	return &connector.ParseResult{
+		Events:    allEvents,
+		TotalRows: int64(len(allEvents)),
+	}, nil
 }
 
 // dispatch processes a single binlog event based on its type.
@@ -151,8 +199,7 @@ func (p *BinlogParser) dispatch(hdr *EventHeader, payload []byte) error {
 		return nil
 
 	case QueryEvent:
-		// Query events (BEGIN, COMMIT, DDL, etc.) are not parsed for row data
-		return nil
+		return p.handleQueryEvent(hdr, payload)
 
 	default:
 		// Unknown/unsupported events are silently skipped
@@ -172,49 +219,8 @@ func (p *BinlogParser) handleFormatDescriptionEvent(hdr *EventHeader, payload []
 	// Bytes 52-55: creation timestamp
 	// Byte 56: common header length (usually 19 for v4)
 
-	// Check if checksums are enabled: the last bytes of the payload contain
-	// an event-type header length array. For FDE itself, its own post-header
-	// length is at a specific position.
-	// Checksum flag: MySQL 5.6+ stores a checksum algorithm indicator at the end.
-	// Actually, the checksum flag is determined by looking at the very last bytes
-	// of the FDE payload. MySQL appends a checksum algorithm description.
-
-	// In MySQL 5.6+, the FDE payload has:
-	// [2 binlog_version] [50 server_version] [4 create_timestamp] [1 header_length]
-	// [N event-type header lengths] [1 checksum algorithm flag: 0=off, 1=CRC32, etc.]
-	//
-	// The checksum algorithm bytes are at the end. Let me check:
-	// The payload includes trailing data beyond just the post-header lengths.
-	// MySQL appends 1 byte for the checksum algorithm after the post-header len array.
-	// The checksum algorithm byte appears at the end of the payload.
-
-	// For simplicity, we check if the payload length is sufficient and
-	// whether checksum info is present. The standard approach:
-	// If the payload has at least 57 bytes + post-header lens + 1, and
-	// the last byte != 0, checksums are enabled.
-	// But this varies by MySQL version. We'll use a simpler heuristic:
-	// If hdr.EventLen indicates a checksum was included (non-zero checksum area),
-	// and the CRC flag in the format description indicates it.
-	//
-	// Actually the reliable way: Check if the FormatDescriptionEvent itself has a CRC
-	// by verifying if the FDE was written with a trailing CRC.
-	// Since the first FDE has no CRC (it's before checksums are enabled),
-	// we look for the checksum algorithm byte after the post-header length array.
-
-	// Standard heuristics: In MySQL 5.6+, if binlog_checksum=CRC32:
-	// the FDE includes a trailing byte with value BINLOG_CHECKSUM_ALG_CRC32 = 1
-	// or BINLOG_CHECKSUM_ALG_UNDEF = 0 (no checksum)
-	// The format is: common_header_len + post_header_len[event_types...] + 1 (checksum alg)
-	// But we need to find how many event types are defined.
-
 	// For now, if the payload length > 57 + 35 (approximate), assume checksums enabled.
-	// A more reliable approach: look for a non-zero algorithm byte near the end.
 	if len(payload) > 57+35 {
-		// Look for the checksum algorithm byte. It's the byte after all
-		// post-header lengths. If it's 1 (CRC32), checksums are enabled.
-		// The total known post-header entries: typically 35+ for MySQL 8.0.
-		// We search backwards: find the last non-zero byte before the end
-		// that could be the algorithm indicator.
 		lastByte := payload[len(payload)-1]
 		if lastByte == 1 && !p.skipChecksum {
 			p.checksumEnabled = true
@@ -269,13 +275,58 @@ func (p *BinlogParser) handleRotateEvent(hdr *EventHeader, payload []byte) error
 		return fmt.Errorf("RotateEvent payload too short: %d bytes", len(payload))
 	}
 	// The next position in the new binlog file
-	_ = uint64(0)
 	// Filename starts at offset 8
 	// We don't auto-follow the rotation; ParseFiles handles multi-file parsing.
 	return nil
 }
 
+// handleQueryEvent processes a QueryEvent. It checks whether the event
+// contains a DDL statement and records DDL markers accordingly.
+func (p *BinlogParser) handleQueryEvent(hdr *EventHeader, payload []byte) error {
+	if len(payload) < 13 {
+		return nil
+	}
+
+	// Post-header layout (13 bytes):
+	//   [0:4]  thread_id
+	//   [4:8]  execution_time
+	//   [8]    database name length
+	//   [9:11] error_code
+	//   [11:13] status_vars_length
+
+	dbLen := int(payload[8])
+	statusVarsLen := int(binary.LittleEndian.Uint16(payload[11:13]))
+
+	pos := 13 + statusVarsLen
+	if pos+dbLen+1 > len(payload) {
+		return nil
+	}
+
+	dbName := string(payload[pos : pos+dbLen])
+	pos += dbLen + 1
+
+	sqlText := string(payload[pos:])
+
+	// Check for DDL
+	if isDDL(sqlText) {
+		objType, objName := extractDDLInfo(sqlText, dbName)
+		// Compute event start position: NextPos - EventLen
+		eventPos := hdr.NextPos - hdr.EventLen
+		ddl := DDLEvent{
+			Timestamp:  time.Unix(int64(hdr.Timestamp), 0).UTC(),
+			Statement:  sqlText,
+			ObjectType: objType,
+			ObjectName: objName,
+			Position:   eventPos,
+		}
+		p.ddlEvents = append(p.ddlEvents, ddl)
+	}
+
+	return nil
+}
+
 // convertToRowEvents converts parsed RowEventData entries into connector.RowEvent entries.
+// It applies table filtering if ParseOptions.TargetTable is set.
 func (p *BinlogParser) convertToRowEvents(hdr *EventHeader, data *RowEventData, eventType connector.EventType) error {
 	tm := p.reg.Get(data.TableID)
 	dbName := ""
@@ -283,6 +334,15 @@ func (p *BinlogParser) convertToRowEvents(hdr *EventHeader, data *RowEventData, 
 	if tm != nil {
 		dbName = tm.Database
 		tblName = tm.Table
+	}
+
+	// Table filtering
+	if p.opts.TargetTable != "" {
+		qualified := dbName + "." + tblName
+		if qualified != p.opts.TargetTable {
+			// Skip events for non-matching tables
+			return nil
+		}
 	}
 
 	ts := time.Unix(int64(hdr.Timestamp), 0).UTC()
@@ -319,4 +379,144 @@ func extractPrimaryKey(vals map[string]interface{}) map[string]interface{} {
 	// With positional keys, we cannot know which columns form the PK.
 	// Return nil; the rollback layer should resolve this.
 	return nil
+}
+
+// ============================================================
+// DDL Detection Helpers
+// ============================================================
+
+// ddlKeywords lists the DDL statement keywords we detect.
+var ddlKeywords = []string{
+	"ALTER ",
+	"CREATE ",
+	"DROP ",
+	"TRUNCATE ",
+	"RENAME ",
+}
+
+// ddlPrefixes maps SQL keyword to object type, ordered by specificity
+// (longer match first to avoid "ALTER " matching when "ALTER TABLE " is needed).
+var ddlPrefixes = []struct {
+	keyword  string
+	objType  string
+}{
+	{"ALTER TABLE ", "TABLE"},
+	{"ALTER DATABASE ", "DATABASE"},
+	{"ALTER SCHEMA ", "DATABASE"},
+	{"CREATE TABLE ", "TABLE"},
+	{"CREATE DATABASE ", "DATABASE"},
+	{"CREATE SCHEMA ", "DATABASE"},
+	{"DROP TABLE ", "TABLE"},
+	{"DROP DATABASE ", "DATABASE"},
+	{"DROP SCHEMA ", "DATABASE"},
+	{"TRUNCATE TABLE ", "TABLE"},
+	{"TRUNCATE ", "TABLE"},
+	{"RENAME TABLE ", "TABLE"},
+	{"ALTER ", "TABLE"},       // fallback: assume TABLE
+	{"CREATE ", "TABLE"},      // fallback: assume TABLE
+	{"DROP ", "TABLE"},        // fallback: assume TABLE
+}
+
+// isDDL returns true if the SQL text appears to be a DDL statement.
+func isDDL(sql string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(sql))
+	for _, kw := range ddlKeywords {
+		if strings.HasPrefix(upper, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractDDLInfo parses the SQL and current database name to determine
+// the object type and fully qualified object name.
+func extractDDLInfo(sql, currentDB string) (objType, objName string) {
+	upper := strings.ToUpper(strings.TrimSpace(sql))
+
+	var matchedKeyword, matchedType string
+	for _, entry := range ddlPrefixes {
+		if strings.Contains(upper, entry.keyword) {
+			matchedKeyword = entry.keyword
+			matchedType = entry.objType
+			break
+		}
+	}
+
+	if matchedKeyword == "" {
+		return "", ""
+	}
+
+	objType = matchedType
+
+	// Find the keyword in the original SQL (preserving case)
+	sqlUpper := strings.ToUpper(sql)
+	idx := strings.Index(sqlUpper, matchedKeyword)
+	if idx < 0 {
+		return objType, ""
+	}
+
+	rest := strings.TrimSpace(sql[idx+len(matchedKeyword):])
+	name := extractIdentifier(rest)
+	if name == "" {
+		return objType, ""
+	}
+
+	// If the SQL itself is qualified (contains a dot), use it as-is.
+	// Otherwise, qualify with the current database for TABLE objects.
+	if strings.Contains(name, ".") {
+		objName = name
+	} else if objType == "TABLE" && currentDB != "" {
+		objName = currentDB + "." + name
+	} else {
+		objName = name
+	}
+
+	return
+}
+
+// extractIdentifier extracts the first identifier (table or database name)
+// from a SQL fragment. It handles backtick quoting (including escaped
+// backticks via doubling: ```` represents a literal backtick) and stops at the
+// first non-identifier character (space, comma, parenthesis, etc.).
+func extractIdentifier(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	var name strings.Builder
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch == '`' {
+			// Backtick-quoted segment
+			i++
+			// Read until closing backtick, handling escaped backticks (``)
+			for i < len(s) {
+				if s[i] == '`' {
+					// Check if this is an escaped backtick
+					if i+1 < len(s) && s[i+1] == '`' {
+						name.WriteByte('`')
+						i += 2
+						continue
+					}
+					// This is the closing backtick
+					i++
+					break
+				}
+				name.WriteByte(s[i])
+				i++
+			}
+		} else if ch == '.' {
+			name.WriteByte('.')
+			i++
+		} else if ch == ' ' || ch == '\t' || ch == ',' || ch == '(' || ch == ')' || ch == ';' {
+			break
+		} else {
+			name.WriteByte(ch)
+			i++
+		}
+	}
+
+	return name.String()
 }
