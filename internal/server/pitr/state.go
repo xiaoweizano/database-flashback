@@ -49,10 +49,11 @@ func IsTerminal(state OperationState) bool {
 	return state == StateCompleted || state == StateFailed || state == StateCancelled
 }
 
-// MustTransition panics with a descriptive message if the transition from
-// `from` to `to` is invalid.
-func MustTransition(from, to OperationState) {
+// TryTransitionErr returns a descriptive error if the transition from `from` to
+// `to` is invalid.
+func TryTransitionErr(from, to OperationState) error {
 	if !TransitionValid(from, to) {
-		panic(fmt.Sprintf("invalid state transition: %s -> %s", from, to))
+		return fmt.Errorf("invalid state transition: %s -> %s", from, to)
 	}
+	return nil
 }

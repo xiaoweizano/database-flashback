@@ -53,22 +53,39 @@ func TestIsTerminal(t *testing.T) {
 	assert.False(t, IsTerminal(StateExecuting), "executing should not be terminal")
 }
 
-func TestMustTransition_PanicsOnInvalid(t *testing.T) {
-	assert.Panics(t, func() {
-		MustTransition(StatePreflight, StateCompleted)
-	}, "preflight -> completed should panic")
+func TestTryTransitionErr_Invalid(t *testing.T) {
+	tests := []struct {
+		from, to OperationState
+	}{
+		{StatePreflight, StateCompleted},
+		{StateCompleted, StateFailed},
+		{StateFailed, StateCancelled},
+		{StateCancelled, StatePreflight},
+		{StateExecuting, StateCancelled},
+	}
+	for _, tc := range tests {
+		err := TryTransitionErr(tc.from, tc.to)
+		assert.Error(t, err, "transition %s -> %s should error", tc.from, tc.to)
+	}
 }
 
-func TestMustTransition_PanicsOnTerminalSource(t *testing.T) {
-	assert.Panics(t, func() {
-		MustTransition(StateCompleted, StateFailed)
-	}, "completed -> failed should panic")
-}
-
-func TestMustTransition_ValidDoesNotPanic(t *testing.T) {
-	assert.NotPanics(t, func() {
-		MustTransition(StatePreflight, StateConfirmed)
-	}, "preflight -> confirmed should not panic")
+func TestTryTransitionErr_Valid(t *testing.T) {
+	tests := []struct {
+		from, to OperationState
+	}{
+		{StatePreflight, StateConfirmed},
+		{StateConfirmed, StateParsing},
+		{StateParsing, StatePreviewed},
+		{StatePreviewed, StateExecuting},
+		{StateExecuting, StateCompleted},
+		{StatePreflight, StateCancelled},
+		{StateConfirmed, StateCancelled},
+		{StatePreviewed, StateCancelled},
+	}
+	for _, tc := range tests {
+		err := TryTransitionErr(tc.from, tc.to)
+		assert.NoError(t, err, "transition %s -> %s should not error", tc.from, tc.to)
+	}
 }
 
 func TestTransitionValid_AllTerminalStatesAreDeadEnds(t *testing.T) {

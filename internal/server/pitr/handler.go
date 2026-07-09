@@ -513,7 +513,10 @@ func (h *Handler) simulateOperation(op *Operation, operator string) {
 // tryTransition attempts a state transition. Returns false if the transition
 // is invalid (e.g. cancelled by another goroutine).
 func (h *Handler) tryTransition(op *Operation, to OperationState) bool {
-	MustTransition(op.State, to)
+	if !TransitionValid(op.State, to) {
+		log.Printf("pitr: invalid state transition %s -> %s for op %s", op.State, to, op.ID)
+		return false
+	}
 	op.State = to
 	if err := h.opStore.Update(op); err != nil {
 		log.Printf("pitr: failed to transition op %s to %s: %v", op.ID, to, err)
