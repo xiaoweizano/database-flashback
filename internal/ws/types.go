@@ -4,11 +4,12 @@ package ws
 // platform can request from an agent, or that an agent can send to the
 // platform.
 const (
-	CmdPreflight   = "preflight"
-	CmdPITRParse   = "pitr_parse"
-	CmdPITRExecute = "pitr_execute"
-	CmdStatus      = "status"
-	CmdShutdown    = "shutdown"
+	CmdPreflight    = "preflight"
+	CmdPITRParse    = "pitr_parse"
+	CmdPITRExecute  = "pitr_execute"
+	CmdStatus       = "status"
+	CmdShutdown     = "shutdown"
+	CmdCertRenewal  = "cert_renewal"
 )
 
 // Response status constants.

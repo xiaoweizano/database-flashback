@@ -58,7 +58,8 @@
       "Bash(nslookup google.com 8.8.8.8)",
       "Bash(curl -fsSL --connect-timeout 30 -H \"User-Agent: Mozilla/5.0\" \"https://dl.google.com/go/go1.22.5.windows-amd64.msi\" --resolve \"dl.google.com:443:142.250.80.147\" -o /tmp/go.msi)",
       "Bash(curl -fsSL --connect-timeout 10 -x \"\" \"http://142.250.80.147\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(go build *)"
     ]
   }
 }
