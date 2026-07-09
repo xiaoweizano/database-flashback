@@ -1,6 +1,9 @@
 package server
 
 import (
+	"log"
+	"os"
+
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 
@@ -13,9 +16,14 @@ import (
 
 // NewRouter creates and configures a chi router with all API routes mounted.
 func NewRouter() *chi.Mux {
-	// Shared secret for JWT signing. In production this should come from
-	// environment or config.
-	jwtSecret := []byte("change-me-in-production")
+	// Load JWT signing key from environment, with a compile-time default for
+	// local development. In production, always set JWT_SECRET to a unique,
+	// unpredictable value.
+	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtSecret) == 0 {
+		jwtSecret = []byte("change-me-in-production")
+		log.Println("WARNING: JWT_SECRET not set — using insecure default. Set JWT_SECRET for production.")
+	}
 
 	// Initialise in-memory stores.
 	userStore := auth.NewInMemoryUserStore()
