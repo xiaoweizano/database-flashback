@@ -65,7 +65,8 @@
       "Bash(npm run *)",
       "Bash(npm cache *)",
       "Bash(npx playwright *)",
-      "Bash(npx --yes playwright --version)"
+      "Bash(npx --yes playwright --version)",
+      "Bash(chmod +x *)"
     ]
   }
 }

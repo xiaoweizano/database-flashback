@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: pitr_test
+      MYSQL_DATABASE: pitr_test
+    command: --binlog-format=ROW --binlog-row-image=FULL --log-bin=mysql-bin
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - pitr-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent:
+    build:
+      context: .
+      target: agent
+    environment:
+      MYSQL_DSN: "root:pitr_test@tcp(mysql:3306)/pitr_test"
+      AGENT_CONFIG: /etc/agent/config.json
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - agent-data:/var/lib/mysql-pitr
+    networks:
+      - pitr-network
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      target: server
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "root:pitr_test@tcp(mysql:3306)/pitr_server"
+      LISTEN_ADDR: ":8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - pitr-network
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  agent-data:
+
+networks:
+  pitr-network:
+    driver: bridge
