@@ -201,7 +201,7 @@ func TestBinlogReader_ReadEvent_WithCRC(t *testing.T) {
 	r.EnableChecksum()
 
 	// Read the query event
-	hdr, body, err = r.ReadEvent()
+	hdr, body, err := r.ReadEvent()
 	require.NoError(t, err)
 	assert.Equal(t, QueryEvent, hdr.Type)
 	assert.NotEmpty(t, body)
@@ -438,10 +438,10 @@ func TestBinlogReader_ReadEvent_UnknownEventType(t *testing.T) {
 	err = r.Open(f.Name())
 	require.NoError(t, err)
 
-	hdr, payload, err := r.ReadEvent()
+	gotHdr, payload, err := r.ReadEvent()
 	require.NoError(t, err)
-	assert.Equal(t, EventType(99), hdr.Type)
-	assert.Equal(t, "EVENT(99)", hdr.Type.String())
+	assert.Equal(t, EventType(99), gotHdr.Type)
+	assert.Equal(t, "EVENT(99)", gotHdr.Type.String())
 	assert.Equal(t, body, payload)
 	assert.Equal(t, nextPos, r.Position())
 

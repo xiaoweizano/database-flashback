@@ -71,7 +71,7 @@ func TestParseValue_LONG(t *testing.T) {
 	data := []byte{0xEF, 0xBE, 0xAD, 0xDE} // 0xDEADBEEF as signed = -559038737
 	vals, pos, err := parser.readColumnValue(data, 0, MYSQL_TYPE_LONG, ColumnMeta{}, nil, 0, nil)
 	require.NoError(t, err)
-	assert.Equal(t, int64(int32(0xDEADBEEF)), vals["col_0"])
+	assert.Equal(t, int64(-559038737), vals["col_0"])
 	assert.Equal(t, 4, pos)
 }
 
@@ -645,15 +645,15 @@ func TestReadFractionalPart(t *testing.T) {
 }
 
 func TestReadInt64Value(t *testing.T) {
-	v, pos, err := readInt64Value([]byte{0xFF}, 0, 1)
+	v, _, err := readInt64Value([]byte{0xFF}, 0, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(-1), v)
 
-	v, pos, err = readInt64Value([]byte{0x00, 0x80}, 0, 2)
+	v, _, err = readInt64Value([]byte{0x00, 0x80}, 0, 2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(-32768), v)
 
-	v, pos, err = readInt64Value([]byte{0x01, 0x02}, 0, 2)
+	v, _, err = readInt64Value([]byte{0x01, 0x02}, 0, 2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0x0201), v)
 

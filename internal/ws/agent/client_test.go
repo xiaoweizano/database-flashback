@@ -295,7 +295,7 @@ func TestConnectAndSendCommand(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -376,7 +376,7 @@ func TestClientCloseTerminatesPending(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -456,7 +456,7 @@ func TestClientDispatchesIncomingCommand(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 	defer client.Close()
 
 	// Register a dispatcher.
@@ -524,7 +524,7 @@ func TestClientNoDispatcherForIncomingCommand(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 	defer client.Close()
 	// No dispatcher set.
 
@@ -563,7 +563,7 @@ func TestConcurrentSendCommands(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -641,7 +641,7 @@ func TestClientReconnectAfterDisconnect(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -694,7 +694,7 @@ func TestClientDoneChannel(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -728,7 +728,7 @@ func TestClientMultipleClose(t *testing.T) {
 	}
 
 	serverURL := newTestWSServer(t, bundle, handler)
-	cfg, client := clientConfigForTest(t, bundle, serverURL)
+	_, client := clientConfigForTest(t, bundle, serverURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

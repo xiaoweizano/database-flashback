@@ -206,7 +206,7 @@ func buildDeleteBinlog(t *testing.T) string {
 
 	// DeleteRowsEventV1: delete id=99
 	payload := make([]byte, 8)
-	payload[0] = 300
+	payload[0] = 44
 	payload[6] = 0
 	payload[7] = 0
 
@@ -318,7 +318,7 @@ func TestBinlogParser_Integration_MultipleRows(t *testing.T) {
 
 	// WriteRows with 3 rows: id=1, id=2, id=3
 	payload := make([]byte, 8)
-	payload[0] = 400
+	payload[0] = 144
 	payload[6] = 0
 	payload[7] = 0
 
@@ -893,7 +893,7 @@ func TestTableFilter_SpecificTable(t *testing.T) {
 	pos = tmNext3
 
 	wr3 := make([]byte, 8)
-	wr3[0] = 300
+	wr3[0] = 44
 	wr3[6] = 0
 	wr3[7] = 0
 	wr3 = append(wr3, 0x01)

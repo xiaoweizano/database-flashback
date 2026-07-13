@@ -222,7 +222,7 @@ func TestRevoke(t *testing.T) {
 	block, _ := pem.Decode(certPEM)
 	cert, _ := x509.ParseCertificate(block.Bytes)
 
-	serial := cert.SerialNumber.Text()
+	serial := cert.SerialNumber.Text(16)
 
 	if ca.IsRevoked(serial) {
 		t.Error("cert should not be revoked yet")

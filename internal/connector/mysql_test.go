@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
