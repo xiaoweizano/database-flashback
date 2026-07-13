@@ -3,9 +3,11 @@ package org
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +28,7 @@ func setupOrgTest(t *testing.T) (*Handler, *InMemoryOrgStore, *auth.InMemoryUser
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          t.Name() + "@example.com",
+		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)

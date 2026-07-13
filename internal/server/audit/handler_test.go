@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,7 +29,7 @@ func setupAuditTest(t *testing.T) (*Handler, *InMemoryAuditStore, *org.InMemoryO
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          "test@example.com",
+		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
@@ -36,12 +37,11 @@ func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	return user.ID
 }
 
-func authenticatedRequest(t *testing.T, target string, userID string, secret []byte) *http.Request {
+func authenticatedRequest(t *testing.T, target string, userID string, _ []byte) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, target, nil)
-	token, err := auth.CreateToken(userID, "test@example.com", secret)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	claims := &auth.Claims{UserID: userID, Email: "test@example.com"}
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
 	return req
 }
 

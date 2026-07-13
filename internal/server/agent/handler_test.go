@@ -2,16 +2,28 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
 	"github.com/a-shan/mysql-pitr/internal/server/org"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// withChiURLParam sets a chi URL parameter on the request context.
+func withChiURLParam(r *http.Request, key, value string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
 
 // test helpers
 
@@ -28,7 +40,7 @@ func setupAgentTest(t *testing.T) (*Handler, *InMemoryAgentStore, *org.InMemoryO
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          t.Name() + "@example.com",
+		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)

@@ -3,6 +3,7 @@ package pitr
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,7 +52,7 @@ func setupTest(t *testing.T) *testFixture {
 func (f *testFixture) createUser(t *testing.T) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          "test@example.com",
+		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := f.userStore.Create(user)
