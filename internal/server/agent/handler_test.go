@@ -37,10 +37,13 @@ func setupAgentTest(t *testing.T) (*Handler, *InMemoryAgentStore, *org.InMemoryO
 	return handler, agentStore, orgStore, userStore, secret
 }
 
+var testUserCounter int64
+
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
+	testUserCounter++
 	user := &auth.User{
-		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
+		Email:          fmt.Sprintf("%s-%d-%d@example.com", t.Name(), testUserCounter, time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
@@ -192,6 +195,7 @@ func TestApproveAgent_Success(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost,
 		"/api/agents/"+agent.ID+"/approve", nil, adminID, secret)
+	req = withChiURLParam(req, "id", agent.ID)
 	w := httptest.NewRecorder()
 	h.Approve(w, req)
 

@@ -112,14 +112,9 @@ func TestRegister_EmailNormalised(t *testing.T) {
 // ---------- Login ----------
 
 func TestLogin_Success(t *testing.T) {
-	h, store := setupAuthTest(t)
+	h, _ := setupAuthTest(t)
 
-	// Register first.
-	_ = store.Create(&User{
-		Email:          "bob@example.com",
-		HashedPassword: "$2a$12$dummyhashdummyhashdummyhashdummyhashdummyhashdummyhashdu", // won't match
-	})
-	// Actually register via bcrypt through the handler.
+	// Register via handler.
 	regReq := authRequest(http.MethodPost, "/api/auth/register", registerRequest{
 		Email: "bob@example.com", Password: "pass123",
 	})

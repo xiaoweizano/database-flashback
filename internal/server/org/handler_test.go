@@ -2,6 +2,7 @@ package org
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,10 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// withChiURLParam sets a chi URL parameter on the request context.
+func withChiURLParam(r *http.Request, key, value string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
 
 // test helpers
 
@@ -25,10 +35,13 @@ func setupOrgTest(t *testing.T) (*Handler, *InMemoryOrgStore, *auth.InMemoryUser
 	return handler, orgStore, userStore, secret
 }
 
+var testUserCounter int64
+
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
+	testUserCounter++
 	user := &auth.User{
-		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
+		Email:          fmt.Sprintf("%s-%d-%d@example.com", t.Name(), testUserCounter, time.Now().UnixNano()),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
@@ -103,6 +116,7 @@ func TestInvite_Success(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org.ID+"/invite",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.Invite(w, req)
 
@@ -125,6 +139,7 @@ func TestInvite_NonAdmin(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org.ID+"/invite",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.Invite(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -143,6 +158,7 @@ func TestInvite_NonMember(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org.ID+"/invite",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.Invite(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -154,6 +170,7 @@ func TestInvite_NonexistentOrg(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/nonexistent/invite",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", "nonexistent")
 	w := httptest.NewRecorder()
 	h.Invite(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -177,6 +194,7 @@ func TestAcceptInvite_Success(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org.ID+"/accept",
 		acceptInviteRequest{Code: invite.Code}, memberID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.AcceptInvite(w, req)
 
@@ -205,6 +223,7 @@ func TestAcceptInvite_WrongCode(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org.ID+"/accept",
 		acceptInviteRequest{Code: "bad-code"}, memberID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.AcceptInvite(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -230,6 +249,7 @@ func TestAcceptInvite_OrgMismatch(t *testing.T) {
 	// Try to accept invite for org1 on org2's endpoint.
 	req := authenticatedRequest(t, http.MethodPost, "/api/orgs/"+org2.ID+"/accept",
 		acceptInviteRequest{Code: invite.Code}, memberID, secret)
+	req = withChiURLParam(req, "id", org2.ID)
 	w := httptest.NewRecorder()
 	h.AcceptInvite(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -252,6 +272,7 @@ func TestListMembers_Success(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet, "/api/orgs/"+org.ID+"/members",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.ListMembers(w, req)
 
@@ -275,6 +296,7 @@ func TestListMembers_NonMember(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet, "/api/orgs/"+org.ID+"/members",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", org.ID)
 	w := httptest.NewRecorder()
 	h.ListMembers(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -286,6 +308,7 @@ func TestListMembers_NonexistentOrg(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet, "/api/orgs/nonexistent/members",
 		nil, userID, secret)
+	req = withChiURLParam(req, "id", "nonexistent")
 	w := httptest.NewRecorder()
 	h.ListMembers(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
