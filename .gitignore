@@ -1,0 +1,21 @@
+# --- Binaries ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# --- Test output ---
+coverage.out
+coverage.html
+
+# --- gstack tool ---
+.gstack/
+
+# --- Superpowers tool ---
+.superpowers/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
