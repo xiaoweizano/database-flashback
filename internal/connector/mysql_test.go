@@ -257,7 +257,7 @@ func TestExecuteRollback_BatchError(t *testing.T) {
 
 	result, err := c.ExecuteRollback(context.Background(),
 		[]string{"stmt1", "stmt2"},
-		ExecOptions{BatchSize: 10})
+		ExecOptions{BatchSize: 1})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.BatchesCompleted)
 	assert.Len(t, result.Errors, 1)

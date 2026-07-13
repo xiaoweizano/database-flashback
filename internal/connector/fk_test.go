@@ -111,8 +111,8 @@ func TestGetFKOrder_DisconnectedTables(t *testing.T) {
 	db, mock := newFKMock(t)
 
 	// Only orders->users has FK; t3 is entirely disconnected.
-	mock.ExpectQuery(patternForFK([]string{"users", "orders", "t3"})).
-		WithArgs("users", "orders", "t3", "users", "orders", "t3").
+	mock.ExpectQuery(patternForFK([]string{"t3", "users", "orders"})).
+		WithArgs("t3", "users", "orders", "t3", "users", "orders").
 		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "REFERENCED_TABLE_NAME"}).
 			AddRow("orders", "users"))
 

@@ -75,6 +75,9 @@ func queryFKConstraints(ctx context.Context, db *sql.DB, tables []string) ([]FKC
 // topoSort returns tables ordered so that every referenced table appears
 // before any table that references it, using Kahn's algorithm.
 func topoSort(tables []string, constraints []FKConstraint) []string {
+	if len(tables) == 0 {
+		return nil
+	}
 	inDegree := make(map[string]int, len(tables))
 	children := make(map[string][]string, len(tables))
 
