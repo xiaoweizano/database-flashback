@@ -2,6 +2,7 @@ package pitr
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -88,9 +89,8 @@ func (f *testFixture) authenticatedRequest(t *testing.T, method, target string, 
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, target, &buf)
-	token, err := auth.CreateToken(userID, "test@example.com", f.secret)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	claims := &auth.Claims{UserID: userID, Email: "test@example.com"}
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
 	return req
 }
 

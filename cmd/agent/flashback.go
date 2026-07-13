@@ -41,12 +41,6 @@ type FlashbackOptions struct {
 //  7. If --output: write to file
 //  8. If neither flag: execute against MySQL
 func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
-	// ---- Resolve connection config ----
-	connCfg, err := resolveConnConfig(opts)
-	if err != nil {
-		return fmt.Errorf("flashback: resolve config: %w", err)
-	}
-
 	// ---- Parse recovery time ----
 	recoveryTime, err := time.Parse(time.RFC3339, opts.RecoveryTime)
 	if err != nil {
@@ -55,14 +49,19 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 
 	// ---- Connect ----
 	conn := opts.Connector
-	if conn == nil {
+	if conn != nil {
+		defer conn.Close()
+	} else {
+		connCfg, err := resolveConnConfig(opts)
+		if err != nil {
+			return fmt.Errorf("flashback: resolve config: %w", err)
+		}
 		conn = connector.NewMySQLConnector()
 		if err := conn.Connect(connCfg); err != nil {
 			return fmt.Errorf("flashback: connect: %w", err)
 		}
-		defer conn.Close()
+		log.Printf("connected to MySQL at %s:%d (database: %s)", connCfg.Host, connCfg.Port, connCfg.Database)
 	}
-	log.Printf("connected to MySQL at %s:%d (database: %s)", connCfg.Host, connCfg.Port, connCfg.Database)
 
 	// ---- Preflight ----
 	preflightRes, err := conn.Preflight(ctx)

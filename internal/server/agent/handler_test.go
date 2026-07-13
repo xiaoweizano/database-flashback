@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -46,12 +47,11 @@ func createTestOrg(t *testing.T, store *org.InMemoryOrgStore, adminID string) *o
 	return o
 }
 
-func authenticatedRequest(t *testing.T, method, target string, body interface{}, userID string, secret []byte) *http.Request {
+func authenticatedRequest(t *testing.T, method, target string, body interface{}, userID string, _ []byte) *http.Request {
 	t.Helper()
 	req := newRequest(method, target, body)
-	token, err := auth.CreateToken(userID, "admin@example.com", secret)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	claims := &auth.Claims{UserID: userID, Email: "admin@example.com"}
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
 	return req
 }
 

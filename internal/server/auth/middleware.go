@@ -18,6 +18,13 @@ func ClaimsFromContext(ctx context.Context) *Claims {
 	return claims
 }
 
+// ContextWithClaims returns a new context with the given claims stored under
+// the same key used by AuthMiddleware. Intended for unit tests that call
+// handlers directly without going through the middleware.
+func ContextWithClaims(ctx context.Context, c *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, c)
+}
+
 // AuthMiddleware is an HTTP middleware that validates a Bearer JWT token from
 // the Authorization header and injects the parsed claims into the request
 // context. Requests without a valid token receive a 401 response.
