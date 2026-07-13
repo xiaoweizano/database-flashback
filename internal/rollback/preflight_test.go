@@ -157,6 +157,20 @@ func TestPreflightRun_BinlogRowImageWarn(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SHOW VARIABLES LIKE 'binlog_row_image'")).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("binlog_row_image", "MINIMAL"))
 
+	// Remaining preflight checks: binlog availability, permissions, disk space.
+	mock.ExpectQuery(regexp.QuoteMeta("SHOW BINARY LOGS")).
+		WillReturnRows(sqlmock.NewRows([]string{"Log_name", "File_size"}).
+			AddRow("mysql-bin.000001", int64(1024)))
+	mock.ExpectQuery(regexp.QuoteMeta("SHOW VARIABLES LIKE 'binlog_expire_logs_seconds'")).
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("binlog_expire_logs_seconds", "604800"))
+	mock.ExpectQuery(regexp.QuoteMeta("SHOW GRANTS")).
+		WillReturnRows(sqlmock.NewRows([]string{"Grants for user"}).
+			AddRow("GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'u'@'%'"))
+	mock.ExpectQuery(regexp.QuoteMeta("SHOW VARIABLES LIKE 'datadir'")).
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("datadir", "/var/lib/mysql"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT SUM(data_length + index_length) FROM information_schema.tables")).
+		WillReturnRows(sqlmock.NewRows([]string{"SUM(data_length + index_length)"}).AddRow(int64(1048576)))
+
 	result, err := r.Run(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, connector.PreflightPass, result.Status) // warn should not cause FAIL
@@ -239,7 +253,7 @@ func TestPreflightRun_BinlogExpireLogsDaysFallback(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("SHOW GRANTS")).
 		WillReturnRows(sqlmock.NewRows([]string{"Grants for user"}).
-			AddRow("GRANT SELECT ON *.* TO 'u'@'%'"))
+			AddRow("GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'u'@'%'"))
 
 	mock.ExpectQuery(regexp.QuoteMeta("SHOW VARIABLES LIKE 'datadir'")).
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("datadir", "/var/lib/mysql"))
@@ -375,6 +389,6 @@ func TestFormatBytes(t *testing.T) {
 
 func TestFormatDuration(t *testing.T) {
 	assert.Equal(t, "7d", formatDuration(7*24*time.Hour))
-	assert.Equal(t, "24h", formatDuration(24*time.Hour))
+	assert.Equal(t, "1d", formatDuration(24*time.Hour))
 	assert.Equal(t, "5s", formatDuration(5*time.Second))
 }

@@ -402,7 +402,7 @@ func TestExecute_ByteBoundedBatches(t *testing.T) {
 
 	result, err := e.Execute(context.Background(),
 		[]string{stmt1, stmt2},
-		ExecOptions{MaxBatchBytes: 60})
+		ExecOptions{MaxBatchBytes: 25})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.BatchesTotal)
 	assert.Equal(t, 2, result.BatchesComplete)
