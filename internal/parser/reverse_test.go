@@ -426,7 +426,7 @@ func TestReverseSQLBatch(t *testing.T) {
 	wants := []string{
 		"DELETE FROM `users` WHERE `id` = 1 LIMIT 1;",
 		"DELETE FROM `users` WHERE `id` = 2 LIMIT 1;",
-		"INSERT INTO `users` (`id`, `name`) VALUES (1, 'Alice');",
+		"INSERT INTO `users` (`id`, `name`) VALUES (3, 'Carol');",
 	}
 	for i := range wants {
 		if got[i] != wants[i] {

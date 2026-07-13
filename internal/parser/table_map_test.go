@@ -57,9 +57,7 @@ func TestParseTableMap_Basic(t *testing.T) {
 		"users",
 		[]byte{MYSQL_TYPE_LONG, MYSQL_TYPE_VARCHAR, MYSQL_TYPE_TINY},
 		[]byte{
-			0x00,                     // LONG: no metadata
 			0x64, 0x00,               // VARCHAR(100): length=100 (LE)
-			0x00,                     // TINY: no metadata
 		},
 		[]byte{0x00}, // null bitmap (no nullable columns)
 	)

@@ -206,7 +206,8 @@ func buildDeleteBinlog(t *testing.T) string {
 
 	// DeleteRowsEventV1: delete id=99
 	payload := make([]byte, 8)
-	payload[0] = 44
+	payload[0] = 0x2C // table ID 300 LE byte 0
+	payload[1] = 0x01 // table ID 300 LE byte 1
 	payload[6] = 0
 	payload[7] = 0
 
@@ -315,10 +316,10 @@ func TestBinlogParser_Integration_MultipleRows(t *testing.T) {
 	tmNext := pos + uint32(EventHeaderSize+len(tmPayload))
 	writeEvent(f, EventHeader{Timestamp: 1001, Type: TableMapEvent, ServerID: 1, NextPos: tmNext}, tmPayload, false)
 	pos = tmNext
-
 	// WriteRows with 3 rows: id=1, id=2, id=3
 	payload := make([]byte, 8)
-	payload[0] = 144
+	payload[0] = 0x90 // table ID 400 LE byte 0
+	payload[1] = 0x01 // table ID 400 LE byte 1
 	payload[6] = 0
 	payload[7] = 0
 

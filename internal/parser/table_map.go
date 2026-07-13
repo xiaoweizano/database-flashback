@@ -274,10 +274,11 @@ func parseColumnMetadata(metaBytes []byte, metaPos int, colType byte, meta *Colu
 		if metaPos+2 <= len(metaBytes) {
 			meta.BitBits = int(metaBytes[metaPos])
 			meta.BitBytes = int(metaBytes[metaPos+1])
-			meta.Length = (meta.BitBytes-1)*8 + meta.BitBits
-			if meta.Length < 0 {
-				meta.Length = 0
+			bits := meta.BitBits
+			if bits == 0 {
+				bits = 8
 			}
+			meta.Length = (meta.BitBytes-1)*8 + bits
 			metaPos += 2
 		}
 

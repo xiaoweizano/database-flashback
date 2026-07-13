@@ -26,7 +26,8 @@ type RowData struct {
 // RowEventParser parses WriteRows/UpdateRows/DeleteRows events using a
 // TableMapRegistry to resolve column metadata.
 type RowEventParser struct {
-	registry *TableMapRegistry
+	registry       *TableMapRegistry
+	currentTableID uint64 // set during row parsing for column type lookup
 }
 
 // NewRowEventParser creates a RowEventParser with the given registry.
@@ -45,6 +46,7 @@ func (p *RowEventParser) ParseWriteRowsEvent(payload []byte, v2 bool) (*RowEvent
 	if err != nil {
 		return nil, err
 	}
+	p.currentTableID = tableID
 
 	// Body: column count + columns-present bitmap + rows
 	colCount, pos, err := LengthEncodedInt(payload, pos)
@@ -84,6 +86,7 @@ func (p *RowEventParser) ParseDeleteRowsEvent(payload []byte, v2 bool) (*RowEven
 	if err != nil {
 		return nil, err
 	}
+	p.currentTableID = tableID
 
 	colCount, pos, err := LengthEncodedInt(payload, pos)
 	if err != nil {
@@ -122,6 +125,7 @@ func (p *RowEventParser) ParseUpdateRowsEvent(payload []byte, v2 bool) (*RowEven
 	if err != nil {
 		return nil, err
 	}
+	p.currentTableID = tableID
 
 	colCount, pos, err := LengthEncodedInt(payload, pos)
 	if err != nil {
@@ -261,13 +265,12 @@ func (p *RowEventParser) parseRowAfter(payload []byte, pos int, colCount uint64,
 	return RowData{After: values, Before: nil}, pos, nil
 }
 
-// lookupTableMap tries to find the table map for the current event.
-// Since we don't have the table ID at this point in the body parsing,
-// we rely on the caller to set it, or we extract it from the payload.
-// This is a no-op stub; the actual table map lookup is done by the caller.
+// lookupTableMap looks up the table map for the currently-parsing event
+// from the registry, using currentTableID set during parseRowPostHeader.
 func (p *RowEventParser) lookupTableMap(payload []byte, pos int) *TableMap {
-	_ = payload
-	_ = pos
+	if p.registry != nil {
+		return p.registry.Get(p.currentTableID)
+	}
 	return nil
 }
 
@@ -280,6 +283,10 @@ func colName(tm *TableMap, i int) string {
 // readColumnValue reads a single column value from the binary data.
 func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 	colMeta ColumnMeta, values map[string]interface{}, colIdx int, tm *TableMap) (map[string]interface{}, int, error) {
+
+	if values == nil {
+		values = make(map[string]interface{})
+	}
 
 	key := colName(tm, colIdx)
 	var val interface{}

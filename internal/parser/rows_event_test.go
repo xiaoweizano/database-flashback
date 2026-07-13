@@ -596,6 +596,15 @@ func TestParseRows_ColumnNotPresent(t *testing.T) {
 	colPresent := buildNullBitmap(3, 0, 2) // bits 0 and 2 set
 	nullBitmap := buildNullBitmap(3)        // none null
 
+	// Register a table map so column types are resolved.
+	reg := NewTableMapRegistry()
+	reg.Set(&TableMap{
+		TableID:     1,
+		ColumnCount: 3,
+		ColumnTypes: []byte{MYSQL_TYPE_TINY, MYSQL_TYPE_TINY, MYSQL_TYPE_TINY},
+		ColumnMeta:  []ColumnMeta{{Type: MYSQL_TYPE_TINY}, {Type: MYSQL_TYPE_TINY}, {Type: MYSQL_TYPE_TINY}},
+	})
+
 	payload := make([]byte, 8)
 	payload[0] = 1
 	payload[6] = 0
@@ -606,7 +615,7 @@ func TestParseRows_ColumnNotPresent(t *testing.T) {
 	// Only values for present columns: 42 for col_0, 99 for col_2
 	payload = append(payload, 42, 99)
 
-	parser := NewRowEventParser(NewTableMapRegistry())
+	parser := NewRowEventParser(reg)
 	result, err := parser.ParseWriteRowsEvent(payload, false)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
