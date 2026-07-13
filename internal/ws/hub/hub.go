@@ -84,7 +84,7 @@ func (h *Hub) HandleConnection(conn *gorilla.Conn, r *http.Request) {
 
 	// Check revocation when a CSRHandler is available.
 	if h.csrHandler != nil && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		serial := r.TLS.PeerCertificates[0].SerialNumber.Text()
+		serial := r.TLS.PeerCertificates[0].SerialNumber.Text(16)
 		if h.csrHandler.IsRevoked(serial) {
 			log.Printf("hub: connection rejected — agent %s certificate revoked (serial %s)", agentID, serial)
 			_ = conn.Close()

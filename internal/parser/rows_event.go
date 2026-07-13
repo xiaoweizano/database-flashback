@@ -811,7 +811,6 @@ func (p *RowEventParser) parseDecimal(data []byte, pos int, meta ColumnMeta) (st
 	// Each 9 digits fit in 4 bytes, plus 1 byte for sign
 	intDigitsPerGroup := 9
 	fracDigitsPerGroup := 9
-	digitsPerGroup := 9
 	groupBytes := 4
 
 	intGroups := (integralLen + intDigitsPerGroup - 1) / intDigitsPerGroup
