@@ -26,7 +26,7 @@ func setupOrgTest(t *testing.T) (*Handler, *InMemoryOrgStore, *auth.InMemoryUser
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          "test@example.com",
+		Email:          t.Name() + "@example.com",
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
@@ -34,17 +34,15 @@ func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	return user.ID
 }
 
-func authenticatedRequest(t *testing.T, method, target string, body interface{}, userID string, secret []byte) *http.Request {
+func authenticatedRequest(t *testing.T, method, target string, body interface{}, userID string, _ []byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, target, &buf)
-
-	token, err := auth.CreateToken(userID, "test@example.com", secret)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	claims := &auth.Claims{UserID: userID, Email: "test@example.com"}
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
 	return req
 }
 

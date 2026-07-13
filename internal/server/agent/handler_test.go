@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +28,7 @@ func setupAgentTest(t *testing.T) (*Handler, *InMemoryAgentStore, *org.InMemoryO
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
 	user := &auth.User{
-		Email:          "admin@example.com",
+		Email:          t.Name() + "@example.com",
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
