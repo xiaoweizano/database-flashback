@@ -170,12 +170,24 @@ func ParseDSNToConnConfig(dsn string) (connector.ConnConfig, error) {
 		}
 	}
 
+	// Copy params from the parsed DSN. The go-sql-driver/mysql ParseDSN
+	// strips well-known params (tls, timeout, etc.) from cfg.Params and
+	// stores them in typed fields instead. Add them back so the
+	// connector.ConnConfig.Params map is complete.
+	params := cfg.Params
+	if params == nil {
+		params = make(map[string]string)
+	}
+	if cfg.TLSConfig != "" {
+		params["tls"] = cfg.TLSConfig
+	}
+
 	return connector.ConnConfig{
 		Host:     host,
 		Port:     port,
 		User:     cfg.User,
 		Password: cfg.Passwd,
 		Database: cfg.DBName,
-		Params:   cfg.Params,
+		Params:   params,
 	}, nil
 }
