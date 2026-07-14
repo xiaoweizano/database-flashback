@@ -2,7 +2,9 @@ package server
 
 import (
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -97,6 +99,25 @@ func NewRouter() *chi.Mux {
 			r.Get("/", auditHandler.Query)
 			r.Get("/export", auditHandler.Export)
 		})
+	})
+
+	// ---- Frontend SPA ----
+	// Serve the built Vite frontend for all non-API routes.
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		webDir = "/usr/share/mysql-pitr/web"
+	}
+	fs := http.FileServer(http.Dir(webDir))
+	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+		path := filepath.Clean(r.URL.Path)
+		if path != "/" {
+			if _, err := os.Stat(filepath.Join(webDir, path)); err == nil {
+				fs.ServeHTTP(w, r)
+				return
+			}
+		}
+		// SPA fallback: serve index.html for client-side routing.
+		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
 	})
 
 	return r
