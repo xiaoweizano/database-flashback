@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { listAgents } from '../../api/agents';
+import { listOrgs } from '../../api/org';
 import { startPITR, getPITRStatus, getPITRProgress, cancelPITR } from '../../api/pitr';
 import type { AgentInfo, PITROperation, ProgressData } from '../../types';
 
@@ -45,9 +46,16 @@ export default function PITRWizardPage() {
   const [operationId, setOperationId] = useState<string | null>(null);
 
   // Fetch agents list
+  const orgsQuery = useQuery({
+    queryKey: ['orgs'],
+    queryFn: listOrgs,
+  });
+  const orgId = orgsQuery.data?.[0]?.id;
+
   const agentsQuery = useQuery({
-    queryKey: ['agents'],
-    queryFn: listAgents,
+    queryKey: ['agents', orgId],
+    queryFn: () => listAgents(orgId),
+    enabled: !!orgId,
   });
 
   const onlineAgents = useMemo(

@@ -4,9 +4,11 @@ import { Table, Badge, Card, Typography, Button, Space, Spin, message } from 'an
 import { CopyOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { listAgents } from '../../api/agents';
+import { listOrgs } from '../../api/org';
+import { useLocale } from '../../hooks/useLocale';
 import type { AgentInfo } from '../../types';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const statusBadge: Record<string, 'success' | 'error' | 'default'> = {
   online: 'success',
@@ -14,61 +16,85 @@ const statusBadge: Record<string, 'success' | 'error' | 'default'> = {
   offline: 'default',
 };
 
-const columns = [
-  {
-    title: 'Hostname',
-    dataIndex: 'hostname',
-    key: 'hostname',
-  },
-  {
-    title: 'Status',
-    dataIndex: 'status',
-    key: 'status',
-    render: (status: string) => (
-      <Badge status={statusBadge[status] || 'default'} text={status} />
-    ),
-  },
-  {
-    title: 'MySQL Version',
-    dataIndex: 'mysqlVersion',
-    key: 'mysqlVersion',
-  },
-  {
-    title: 'Last Seen',
-    dataIndex: 'lastSeen',
-    key: 'lastSeen',
-    render: (date: string) => date ? dayjs(date).format('YYYY-MM-DD HH:mm') : '-',
-  },
-  {
-    title: 'Created',
-    dataIndex: 'createdAt',
-    key: 'createdAt',
-    render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
-  },
-];
-
 export default function AgentListPage() {
   const navigate = useNavigate();
+  const { t } = useLocale();
 
-  const { data: agents, isLoading, error } = useQuery({
-    queryKey: ['agents'],
-    queryFn: listAgents,
+  const { data: orgs, isLoading: orgsLoading } = useQuery({
+    queryKey: ['orgs'],
+    queryFn: listOrgs,
   });
+
+  const selectedOrgId = orgs?.[0]?.id;
+
+  const { data: agents, isLoading: agentsLoading, error } = useQuery({
+    queryKey: ['agents', selectedOrgId],
+    queryFn: () => listAgents(selectedOrgId),
+    enabled: !!selectedOrgId,
+  });
+
+  const columns = [
+    {
+      title: t('agents.hostname'),
+      dataIndex: 'hostname',
+      key: 'hostname',
+    },
+    {
+      title: t('agents.status'),
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Badge status={statusBadge[status] || 'default'} text={status} />
+      ),
+    },
+    {
+      title: t('agents.mysqlVersion'),
+      dataIndex: 'mysqlVersion',
+      key: 'mysqlVersion',
+    },
+    {
+      title: t('agents.lastSeen'),
+      dataIndex: 'lastSeen',
+      key: 'lastSeen',
+      render: (date: string) => date ? dayjs(date).format('YYYY-MM-DD HH:mm') : '-',
+    },
+    {
+      title: t('agents.created'),
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
+    },
+  ];
 
   const handleCopyCommand = () => {
     try {
       navigator.clipboard.writeText('agent --config=<registration-token>');
-      message.success('Command copied to clipboard');
+      message.success(t('agents.copied'));
     } catch {
-      message.error('Failed to copy command');
+      message.error(t('agents.copyFailed'));
     }
   };
 
+  if (!orgsLoading && orgs?.length === 0) {
+    return (
+      <Card className="summary-card">
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <Title level={4}>{t('agents.noOrg')}</Title>
+          <Text type="secondary">{t('agents.noOrgDesc')}</Text>
+          <br /><br />
+          <Button type="primary" onClick={() => navigate('/org')}>
+            {t('agents.goToOrg')}
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
   if (error) {
     return (
-      <Card>
+      <Card className="summary-card">
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <Typography.Text type="danger">Failed to load agents. Please try again later.</Typography.Text>
+          <Text type="danger">{t('agents.loadFailed')}</Text>
         </div>
       </Card>
     );
@@ -76,18 +102,18 @@ export default function AgentListPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>Agents</Title>
+      <div className="page-header">
+        <Title level={3} style={{ margin: 0 }}>{t('agents.title')}</Title>
       </div>
 
-      <Card style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Card className="agent-command-card" style={{ marginBottom: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <Typography.Text strong>Register a New Agent</Typography.Text>
+            <Text strong>{t('agents.register')}</Text>
             <br />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Run this command on the server you want to monitor:
-            </Typography.Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('agents.registerDesc')}
+            </Text>
           </div>
           <Space>
             <code style={{
@@ -99,13 +125,13 @@ export default function AgentListPage() {
               agent --config=&lt;registration-token&gt;
             </code>
             <Button icon={<CopyOutlined />} size="small" onClick={handleCopyCommand}>
-              Copy
+              {t('agents.copy')}
             </Button>
           </Space>
         </div>
       </Card>
 
-      {isLoading ? (
+      {(orgsLoading || agentsLoading) ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin size="large" />
         </div>

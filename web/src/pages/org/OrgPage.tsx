@@ -4,31 +4,10 @@ import { Card, Button, Table, Modal, Form, Input, Select, Row, Col, Typography, 
 import { PlusOutlined, UserAddOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { listOrgs, createOrg, getOrgMembers, inviteMember } from '../../api/org';
+import { useLocale } from '../../hooks/useLocale';
 import type { CreateOrgRequest, InviteMemberRequest } from '../../types';
 
 const { Title } = Typography;
-
-const memberColumns = [
-  {
-    title: 'Email',
-    dataIndex: 'email',
-    key: 'email',
-  },
-  {
-    title: 'Role',
-    dataIndex: 'role',
-    key: 'role',
-    render: (role: string) => (
-      <Tag color={role === 'admin' ? 'red' : 'blue'}>{role}</Tag>
-    ),
-  },
-  {
-    title: 'Joined At',
-    dataIndex: 'joinedAt',
-    key: 'joinedAt',
-    render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm'),
-  },
-];
 
 export default function OrgPage() {
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
@@ -37,6 +16,29 @@ export default function OrgPage() {
   const [createForm] = Form.useForm();
   const [inviteForm] = Form.useForm();
   const queryClient = useQueryClient();
+  const { t } = useLocale();
+
+  const memberColumns = [
+    {
+      title: 'Email',
+      dataIndex: 'email',
+      key: 'email',
+    },
+    {
+      title: t('org.role'),
+      dataIndex: 'role',
+      key: 'role',
+      render: (role: string) => (
+        <Tag color={role === 'admin' ? 'red' : 'blue'}>{role}</Tag>
+      ),
+    },
+    {
+      title: t('org.joinedAt'),
+      dataIndex: 'joinedAt',
+      key: 'joinedAt',
+      render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm'),
+    },
+  ];
 
   const { data: orgs, isLoading: orgsLoading } = useQuery({
     queryKey: ['orgs'],
@@ -52,26 +54,26 @@ export default function OrgPage() {
   const createMutation = useMutation({
     mutationFn: (data: CreateOrgRequest) => createOrg(data),
     onSuccess: () => {
-      message.success('Organization created');
+      message.success(t('org.created'));
       setCreateModalOpen(false);
       createForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['orgs'] });
     },
     onError: () => {
-      message.error('Failed to create organization');
+      message.error(t('org.createFailed'));
     },
   });
 
   const inviteMutation = useMutation({
     mutationFn: (data: InviteMemberRequest) => inviteMember(selectedOrgId!, data),
     onSuccess: () => {
-      message.success('Member invited');
+      message.success(t('org.invited'));
       setInviteModalOpen(false);
       inviteForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['org-members', selectedOrgId] });
     },
     onError: () => {
-      message.error('Failed to invite member');
+      message.error(t('org.inviteFailed'));
     },
   });
 
@@ -91,10 +93,10 @@ export default function OrgPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>Organizations</Title>
+      <div className="page-header">
+        <Title level={3} style={{ margin: 0 }}>{t('org.title')}</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
-          Create Organization
+          {t('org.create')}
         </Button>
       </div>
 
@@ -104,28 +106,33 @@ export default function OrgPage() {
             <Col key={org.id} xs={24} sm={12} lg={8}>
               <Card
                 hoverable
+                className="summary-card"
                 onClick={() => setSelectedOrgId(org.id)}
                 style={{
-                  borderColor: selectedOrgId === org.id ? '#1677ff' : undefined,
+                  borderColor: selectedOrgId === org.id ? '#6366f1' : undefined,
                   borderWidth: selectedOrgId === org.id ? 2 : 1,
                 }}
               >
                 <Card.Meta
-                  title={org.name}
-                  description={`Created: ${dayjs(org.createdAt).format('YYYY-MM-DD')}`}
+                  title={<span style={{ fontWeight: 600 }}>{org.name}</span>}
+                  description={
+                    <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                      {t('org.createdAt')}: {dayjs(org.createdAt).format('YYYY-MM-DD')}
+                    </span>
+                  }
                 />
               </Card>
             </Col>
           ))}
         </Row>
       ) : (
-        <Card>
+        <Card className="summary-card">
           <div style={{ textAlign: 'center', padding: 48 }}>
-            <Title level={4}>No organizations yet</Title>
-            <Typography.Text type="secondary">Create your first organization to get started.</Typography.Text>
+            <Title level={4} style={{ color: '#6b7280' }}>{t('org.noOrgs')}</Title>
+            <Typography.Text type="secondary">{t('org.noOrgsDesc')}</Typography.Text>
             <br /><br />
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
-              Create Organization
+              {t('org.create')}
             </Button>
           </div>
         </Card>
@@ -133,11 +140,16 @@ export default function OrgPage() {
 
       {selectedOrg && (
         <Card
+          className="summary-card"
           style={{ marginTop: 24 }}
-          title={`Members: ${selectedOrg.name}`}
+          title={
+            <span style={{ fontWeight: 600 }}>
+              {t('org.members')}: {selectedOrg.name}
+            </span>
+          }
           extra={
             <Button type="primary" icon={<UserAddOutlined />} onClick={() => setInviteModalOpen(true)}>
-              Invite Member
+              {t('org.inviteMember')}
             </Button>
           }
         >
@@ -152,38 +164,40 @@ export default function OrgPage() {
       )}
 
       <Modal
-        title="Create Organization"
+        title={t('org.createTitle')}
         open={createModalOpen}
         onOk={() => createForm.submit()}
         onCancel={() => { createForm.resetFields(); setCreateModalOpen(false); }}
         confirmLoading={createMutation.isPending}
+        destroyOnClose
       >
         <Form form={createForm} onFinish={handleCreateOrg} layout="vertical">
-          <Form.Item name="name" label="Organization Name" rules={[{ required: true, message: 'Please enter a name' }]}>
-            <Input placeholder="My Organization" />
+          <Form.Item name="name" label={t('org.name')} rules={[{ required: true, message: t('org.nameRequired') }]}>
+            <Input placeholder={t('org.namePlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title="Invite Member"
+        title={t('org.inviteTitle')}
         open={inviteModalOpen}
         onOk={() => inviteForm.submit()}
         onCancel={() => { inviteForm.resetFields(); setInviteModalOpen(false); }}
         confirmLoading={inviteMutation.isPending}
+        destroyOnClose
       >
         <Form form={inviteForm} onFinish={handleInviteMember} layout="vertical">
           <Form.Item
             name="email"
             label="Email"
             rules={[
-              { required: true, message: 'Please enter an email' },
-              { type: 'email', message: 'Please enter a valid email' },
+              { required: true, message: t('auth.validation.emailRequired') },
+              { type: 'email', message: t('auth.validation.emailInvalid') },
             ]}
           >
             <Input placeholder="user@example.com" />
           </Form.Item>
-          <Form.Item name="role" label="Role" initialValue="member">
+          <Form.Item name="role" label={t('org.role')} initialValue="member">
             <Select>
               <Select.Option value="member">Member</Select.Option>
               <Select.Option value="admin">Admin</Select.Option>

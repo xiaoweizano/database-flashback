@@ -1,0 +1,117 @@
+{
+  "app": {
+    "name": "DBBridge",
+    "tagline": "MySQL 闪回与审计平台"
+  },
+  "nav": {
+    "organization": "组织",
+    "agents": "代理",
+    "pitr": "PITR 恢复",
+    "audit": "审计日志",
+    "logout": "退出登录"
+  },
+  "auth": {
+    "signIn": "登录",
+    "signUp": "注册",
+    "welcomeBack": "欢迎回到 DBBridge",
+    "createAccount": "创建您的 DBBridge 账户",
+    "email": "邮箱",
+    "password": "密码",
+    "confirmPassword": "确认密码",
+    "loginSuccess": "登录成功",
+    "registerSuccess": "注册成功",
+    "loginFailed": "登录失败",
+    "registerFailed": "注册失败",
+    "noAccount": "还没有账号？",
+    "hasAccount": "已有账号？",
+    "registerNow": "立即注册",
+    "signInNow": "立即登录",
+    "passwordsDoNotMatch": "两次密码不一致",
+    "placeholder": {
+      "email": "请输入邮箱",
+      "password": "请输入密码",
+      "confirmPassword": "请确认密码"
+    },
+    "validation": {
+      "emailRequired": "请输入邮箱",
+      "emailInvalid": "请输入有效邮箱",
+      "passwordRequired": "请输入密码",
+      "passwordMin": "密码至少6个字符",
+      "confirmRequired": "请确认密码"
+    }
+  },
+  "org": {
+    "title": "组织",
+    "create": "创建组织",
+    "createTitle": "创建组织",
+    "name": "组织名称",
+    "namePlaceholder": "我的组织",
+    "nameRequired": "请输入名称",
+    "noOrgs": "暂无组织",
+    "noOrgsDesc": "创建您的第一个组织来开始使用。",
+    "members": "成员",
+    "inviteMember": "邀请成员",
+    "inviteTitle": "邀请成员",
+    "role": "角色",
+    "joinedAt": "加入时间",
+    "createdAt": "创建时间",
+    "created": "组织创建成功",
+    "createFailed": "创建组织失败",
+    "invited": "成员邀请成功",
+    "inviteFailed": "邀请成员失败"
+  },
+  "agents": {
+    "title": "代理",
+    "register": "注册新代理",
+    "registerDesc": "在要监控的服务器上运行以下命令：",
+    "hostname": "主机名",
+    "status": "状态",
+    "mysqlVersion": "MySQL 版本",
+    "lastSeen": "最后在线",
+    "created": "创建时间",
+    "copy": "复制",
+    "copied": "命令已复制到剪贴板",
+    "copyFailed": "复制失败",
+    "loadFailed": "加载代理失败，请稍后重试。",
+    "noOrg": "未找到组织",
+    "noOrgDesc": "请先创建组织以管理代理。",
+    "goToOrg": "前往组织"
+  },
+  "pitr": {
+    "title": "PITR 恢复",
+    "newRecovery": "新建恢复",
+    "targetTable": "目标表",
+    "recoveryTime": "恢复时间",
+    "mode": "模式",
+    "state": "状态",
+    "createdAt": "创建时间",
+    "detail": "恢复详情"
+  },
+  "audit": {
+    "title": "审计日志",
+    "operator": "操作人",
+    "timestamp": "时间",
+    "targetTable": "目标表",
+    "rowsAffected": "影响行数",
+    "status": "状态"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "出错了",
+    "retry": "重试",
+    "cancel": "取消",
+    "confirm": "确认",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "submit": "提交",
+    "search": "搜索",
+    "noData": "暂无数据",
+    "language": "语言"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English"
+  }
+}

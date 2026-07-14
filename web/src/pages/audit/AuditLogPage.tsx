@@ -39,8 +39,9 @@ export default function AuditLogPage() {
 
   // Fetch agents for filter dropdown
   const agentsQuery = useQuery({
-    queryKey: ['agents'],
-    queryFn: listAgents,
+    queryKey: ['agents', orgId],
+    queryFn: () => listAgents(orgId),
+    enabled: !!orgId,
   });
 
   // Fetch audit entries

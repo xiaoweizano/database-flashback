@@ -35,6 +35,10 @@ type createOrgResponse struct {
 	Organization *Organization `json:"organization"`
 }
 
+type listOrgsResponse struct {
+	Organizations []*Organization `json:"organizations"`
+}
+
 type inviteRequest struct {
 }
 
@@ -108,6 +112,25 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, createOrgResponse{Organization: org})
+}
+
+// List returns all organisations the authenticated user belongs to.
+//
+// GET /api/orgs
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromRequest(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	orgs, err := h.orgStore.ListByUserID(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, listOrgsResponse{Organizations: orgs})
 }
 
 // Invite creates an invitation code for an organisation. Only admins may

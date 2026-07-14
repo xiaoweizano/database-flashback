@@ -1,0 +1,117 @@
+{
+  "app": {
+    "name": "DBBridge",
+    "tagline": "MySQL Flashback & Audit Platform"
+  },
+  "nav": {
+    "organization": "Organization",
+    "agents": "Agents",
+    "pitr": "PITR Recovery",
+    "audit": "Audit Log",
+    "logout": "Logout"
+  },
+  "auth": {
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "welcomeBack": "Welcome back to DBBridge",
+    "createAccount": "Create your DBBridge account",
+    "email": "Email",
+    "password": "Password",
+    "confirmPassword": "Confirm Password",
+    "loginSuccess": "Login successful",
+    "registerSuccess": "Registration successful",
+    "loginFailed": "Login failed",
+    "registerFailed": "Registration failed",
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?",
+    "registerNow": "Register now",
+    "signInNow": "Sign in",
+    "passwordsDoNotMatch": "Passwords do not match",
+    "placeholder": {
+      "email": "Email",
+      "password": "Password",
+      "confirmPassword": "Confirm password"
+    },
+    "validation": {
+      "emailRequired": "Please enter your email",
+      "emailInvalid": "Please enter a valid email",
+      "passwordRequired": "Please enter your password",
+      "passwordMin": "Password must be at least 6 characters",
+      "confirmRequired": "Please confirm your password"
+    }
+  },
+  "org": {
+    "title": "Organization",
+    "create": "Create Organization",
+    "createTitle": "Create Organization",
+    "name": "Organization Name",
+    "namePlaceholder": "My Organization",
+    "nameRequired": "Please enter a name",
+    "noOrgs": "No organizations yet",
+    "noOrgsDesc": "Create your first organization to get started.",
+    "members": "Members",
+    "inviteMember": "Invite Member",
+    "inviteTitle": "Invite Member",
+    "role": "Role",
+    "joinedAt": "Joined At",
+    "createdAt": "Created",
+    "created": "Organization created",
+    "createFailed": "Failed to create organization",
+    "invited": "Member invited",
+    "inviteFailed": "Failed to invite member"
+  },
+  "agents": {
+    "title": "Agents",
+    "register": "Register a New Agent",
+    "registerDesc": "Run this command on the server you want to monitor:",
+    "hostname": "Hostname",
+    "status": "Status",
+    "mysqlVersion": "MySQL Version",
+    "lastSeen": "Last Seen",
+    "created": "Created",
+    "copy": "Copy",
+    "copied": "Command copied to clipboard",
+    "copyFailed": "Failed to copy command",
+    "loadFailed": "Failed to load agents. Please try again later.",
+    "noOrg": "No organization found",
+    "noOrgDesc": "Create an organization first to manage agents.",
+    "goToOrg": "Go to Organization"
+  },
+  "pitr": {
+    "title": "PITR Recovery",
+    "newRecovery": "New Recovery",
+    "targetTable": "Target Table",
+    "recoveryTime": "Recovery Time",
+    "mode": "Mode",
+    "state": "State",
+    "createdAt": "Created",
+    "detail": "Recovery Detail"
+  },
+  "audit": {
+    "title": "Audit Log",
+    "operator": "Operator",
+    "timestamp": "Timestamp",
+    "targetTable": "Target Table",
+    "rowsAffected": "Rows Affected",
+    "status": "Status"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "submit": "Submit",
+    "search": "Search",
+    "noData": "No data",
+    "language": "Language"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English"
+  }
+}

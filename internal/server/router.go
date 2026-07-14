@@ -62,6 +62,7 @@ func NewRouter() *chi.Mux {
 
 		// Organisation endpoints.
 		r.Route("/api/orgs", func(r chi.Router) {
+			r.Get("/", orgHandler.List)
 			r.Post("/", orgHandler.Create)
 
 			r.Route("/{id}", func(r chi.Router) {
