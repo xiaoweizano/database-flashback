@@ -1,11 +1,18 @@
-import { createContext, useContext, useState, useCallback, useMemo, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
 import zh from '../locales/zh.json';
 import en from '../locales/en.json';
+import antdZhCN from 'antd/locale/zh_CN';
+import antdEnUS from 'antd/locale/en_US';
 
 export type Locale = 'zh' | 'en';
 type TranslationMap = Record<string, Record<string, any>>;
 
 const translations: TranslationMap = { zh, en };
+
+const antdLocales: Record<Locale, any> = {
+  zh: antdZhCN,
+  en: antdEnUS,
+};
 
 interface LocaleContextType {
   locale: Locale;
@@ -21,13 +28,8 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     return (localStorage.getItem('locale') as Locale) || 'zh';
   });
-  const [antdLocale, setAntdLocale] = useState<any>(undefined);
 
-  useEffect(() => {
-    import('antd/locale/' + (locale === 'zh' ? 'zh_CN' : 'en_US')).then(mod => {
-      setAntdLocale(mod.default);
-    });
-  }, [locale]);
+  const antdLocale = antdLocales[locale];
 
   const t = useCallback((path: string, fallback?: string): string => {
     const parts = path.split('.');
