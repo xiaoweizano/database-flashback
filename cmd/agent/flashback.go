@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 
 	"github.com/a-shan/mysql-pitr/internal/config"
@@ -51,8 +53,11 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	conn := opts.Connector
 	if conn != nil {
 		defer conn.Close()
-	} else {
-		connCfg, err := resolveConnConfig(opts)
+	}
+	var connCfg connector.ConnConfig
+	if conn == nil {
+		var err error
+		connCfg, err = resolveConnConfig(opts)
 		if err != nil {
 			return fmt.Errorf("flashback: resolve config: %w", err)
 		}
@@ -60,6 +65,7 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 		if err := conn.Connect(connCfg); err != nil {
 			return fmt.Errorf("flashback: connect: %w", err)
 		}
+		defer conn.Close()
 		log.Printf("connected to MySQL at %s:%d (database: %s)", connCfg.Host, connCfg.Port, connCfg.Database)
 	}
 
@@ -94,12 +100,24 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	}
 
 	// ---- Parse binlogs ----
-	// Delegate to the connector's ParseBinlog, which will time-filter internally.
-	parseRes, err := conn.ParseBinlog(ctx, connector.ParseRequest{
-		BinlogFiles: binlogNames,
+	// Determine MySQL data directory to locate binlog files on disk.
+	dataDir, err := resolveDataDir(connCfg)
+	if err != nil {
+		return fmt.Errorf("flashback: resolve binlog directory: %w", err)
+	}
+	log.Printf("MySQL data directory: %s", dataDir)
+
+	paths := make([]string, 0, len(binlogNames))
+	for _, name := range binlogNames {
+		paths = append(paths, dataDir+name)
+	}
+
+	p := parser.NewBinlogParser()
+	parseRes, err := p.ParseFiles(paths, parser.ParseOptions{
 		TargetTable: opts.TargetTable,
 		EndTime:     recoveryTime,
 	})
+	p.Close()
 	if err != nil {
 		return fmt.Errorf("flashback: parse binlogs: %w", err)
 	}
@@ -171,6 +189,41 @@ func resolveConnConfig(opts FlashbackOptions) (connector.ConnConfig, error) {
 	}
 
 	return connector.ConnConfig{}, fmt.Errorf("either --mysql-dsn or --config must be provided")
+}
+
+// resolveDataDir queries MySQL for the data directory path.
+func resolveDataDir(cfg connector.ConnConfig) (string, error) {
+	if cfg.Host == "" {
+		cfg.Host = "127.0.0.1"
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 3306
+	}
+
+	mysqlCfg := mysql.NewConfig()
+	mysqlCfg.User = cfg.User
+	mysqlCfg.Passwd = cfg.Password
+	mysqlCfg.Net = "tcp"
+	mysqlCfg.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	mysqlCfg.ParseTime = true
+
+	db, err := sql.Open("mysql", mysqlCfg.FormatDSN())
+	if err != nil {
+		return "", fmt.Errorf("connect: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var name, value string
+	if err := db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'datadir'").Scan(&name, &value); err != nil {
+		return "", fmt.Errorf("query datadir: %w", err)
+	}
+	if len(value) > 0 && value[len(value)-1] != '/' && value[len(value)-1] != '\\' {
+		value += "/"
+	}
+	return value, nil
 }
 
 // writeSQLToFile writes the generated SQL statements to the given file path.
