@@ -3,8 +3,8 @@ import type { AgentInfo } from '../types';
 
 export async function listAgents(orgId?: string): Promise<AgentInfo[]> {
   const params = orgId ? { orgId } : undefined;
-  const response = await apiClient.get<AgentInfo[]>('/agents', { params });
-  return response.data;
+  const response = await apiClient.get<{ agents: AgentInfo[] }>('/agents', { params });
+  return response.data.agents;
 }
 
 export async function getAgent(id: string): Promise<AgentInfo> {
