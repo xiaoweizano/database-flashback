@@ -67,8 +67,27 @@ export default function AgentListPage() {
   ];
 
   const handleCopyCommand = () => {
+    const text = 'agent --config=<registration-token>';
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => message.success(t('agents.copied')),
+        () => fallbackCopy(text),
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  };
+
+  const fallbackCopy = (text: string) => {
     try {
-      navigator.clipboard.writeText('agent --config=<registration-token>');
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
       message.success(t('agents.copied'));
     } catch {
       message.error(t('agents.copyFailed'));
