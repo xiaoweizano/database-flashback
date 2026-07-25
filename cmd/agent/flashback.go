@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -217,11 +218,18 @@ func resolveDataDir(cfg connector.ConnConfig) (string, error) {
 	defer cancel()
 
 	var name, value string
-	if err := db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'datadir'").Scan(&name, &value); err != nil {
-		return "", fmt.Errorf("query datadir: %w", err)
+	if err := db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'log_bin_basename'").Scan(&name, &value); err != nil {
+		return "", fmt.Errorf("query log_bin_basename: %w", err)
 	}
-	if len(value) > 0 && value[len(value)-1] != '/' && value[len(value)-1] != '\\' {
-		value += "/"
+	if value == "" {
+		return "", fmt.Errorf("log_bin_basename is empty — binary logging may not be enabled")
+	}
+	// Extract directory from the full path (e.g. "/var/log/mysql/mysql-bin" -> "/var/log/mysql/").
+	dir := filepath.Dir(value)
+	if dir != "." {
+		value = dir + string(filepath.Separator)
+	} else {
+		value = ""
 	}
 	return value, nil
 }
