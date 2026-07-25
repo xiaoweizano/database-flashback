@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -100,8 +103,7 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 		binlogNames[i] = bf.Name
 	}
 
-	// ---- Parse binlogs ----
-	// Determine MySQL data directory to locate binlog files on disk.
+	// Resolve binlog directory and build file paths.
 	dataDir, err := resolveDataDir(connCfg)
 	if err != nil {
 		return fmt.Errorf("flashback: resolve binlog directory: %w", err)
@@ -113,15 +115,10 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 		paths = append(paths, dataDir+name)
 	}
 
-	p := parser.NewBinlogParser()
-	parseRes, err := p.ParseFiles(paths, parser.ParseOptions{
-		TargetTable: opts.TargetTable,
-		EndTime:     recoveryTime,
-	})
-	p.Close()
+	// ---- Parse binlogs via mysqlbinlog ----
+	parseRes, err := parseBinlogWithMySQLBinlog(paths, opts.TargetTable, recoveryTime)
 	if err != nil {
-		log.Printf("WARNING: binlog parsing completed with errors: %v", err)
-		log.Printf("Proceeding with %d event(s) recovered from earlier files", len(parseRes.Events))
+		return fmt.Errorf("flashback: parse binlogs: %w", err)
 	}
 	if len(parseRes.Events) == 0 {
 		return fmt.Errorf("flashback: no row events found for table %q before %s", opts.TargetTable, opts.RecoveryTime)
@@ -233,6 +230,169 @@ func resolveDataDir(cfg connector.ConnConfig) (string, error) {
 		value = ""
 	}
 	return value, nil
+}
+
+// parseBinlogWithMySQLBinlog uses the mysqlbinlog tool to parse binlog files
+// and generate reverse SQL statements.
+func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
+	parts := strings.SplitN(targetTable, ".", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", targetTable)
+	}
+
+	// Build mysqlbinlog args.
+	recoveryStr := recoveryTime.Format("2006-01-02 15:04:05")
+	args := []string{
+		"--no-defaults",
+		"--base64-output=DECODE-ROWS",
+		"--verbose",
+		"--stop-datetime=" + recoveryStr,
+	}
+	args = append(args, paths...)
+
+	cmd := exec.Command("mysqlbinlog", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mysqlbinlog pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mysqlbinlog stderr: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("mysqlbinlog start: %w", err)
+	}
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			if t := s.Text(); t != "" {
+				log.Printf("mysqlbinlog: %s", t)
+			}
+		}
+	}()
+
+	tablePattern := "`" + parts[0] + "`.`" + parts[1] + "`"
+	var events []connector.RowEvent
+	scanner := bufio.NewScanner(stdout)
+	var evType connector.EventType
+	var values []interface{}
+	inRow := false
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.Contains(line, "### DELETE FROM "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.DeleteEvent
+			values = nil
+			inRow = true
+			continue
+		}
+		if strings.Contains(line, "### INSERT INTO "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.InsertEvent
+			values = nil
+			inRow = true
+			continue
+		}
+		if strings.Contains(line, "### UPDATE "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.UpdateEvent
+			values = nil
+			inRow = true
+			continue
+		}
+
+		if inRow && strings.HasPrefix(line, "###   @") {
+			eq := strings.IndexByte(line, '=')
+			if eq > 0 {
+				val := parseColumnValue(line[eq+1:])
+				values = append(values, val)
+			}
+		}
+
+		// End of row block — flush.
+		if inRow && !strings.HasPrefix(line, "###") {
+			events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			values = nil
+			inRow = false
+		}
+	}
+
+	if inRow && len(values) > 0 {
+		events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+	}
+	cmd.Wait()
+
+	log.Printf("mysqlbinlog parsed %d row event(s) for %s", len(events), targetTable)
+	return &connector.ParseResult{Events: events, TotalRows: int64(len(events))}, nil
+}
+
+// makeRowEvent constructs a RowEvent from parsed column values.
+func makeRowEvent(typ connector.EventType, db, table string, vals []interface{}) connector.RowEvent {
+	ev := connector.RowEvent{Type: typ, Database: db, Table: table}
+	switch typ {
+	case connector.DeleteEvent:
+		m := make(map[string]interface{}, len(vals))
+		for i, v := range vals {
+			m[fmt.Sprintf("col_%d", i)] = v
+		}
+		ev.Before = m
+	case connector.InsertEvent:
+		m := make(map[string]interface{}, len(vals))
+		for i, v := range vals {
+			m[fmt.Sprintf("col_%d", i)] = v
+		}
+		ev.After = m
+	case connector.UpdateEvent:
+		if len(vals)%2 == 0 {
+			half := len(vals) / 2
+			before := make(map[string]interface{}, half)
+			after := make(map[string]interface{}, half)
+			for i := 0; i < half; i++ {
+				before[fmt.Sprintf("col_%d", i)] = vals[i]
+				after[fmt.Sprintf("col_%d", i)] = vals[half+i]
+			}
+			ev.Before = before
+			ev.After = after
+		}
+	}
+	return ev
+}
+
+// parseColumnValue parses a column value from mysqlbinlog output.
+func parseColumnValue(s string) interface{} {
+	s = strings.TrimSpace(s)
+	if s == "NULL" || s == "'NULL'" {
+		return nil
+	}
+	// Integer
+	if strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'") {
+		return strings.Trim(s, "'")
+	}
+	// Try int first
+	var i int64
+	if _, err := fmt.Sscanf(s, "%d", &i); err == nil {
+		// Check if it was actually a float
+		if strings.Contains(s, ".") {
+			var f float64
+			fmt.Sscanf(s, "%f", &f)
+			return f
+		}
+		return i
+	}
+	// Float
+	var f float64
+	if _, err := fmt.Sscanf(s, "%f", &f); err == nil {
+		return f
+	}
+	return s
 }
 
 // writeSQLToFile writes the generated SQL statements to the given file path.
