@@ -102,7 +102,9 @@
       "Bash(curl -s --connect-timeout 5 -o /dev/null -w \"%{http_code}\" https://api.github.com)",
       "Bash(curl -s --connect-timeout 5 -o /dev/null -w \"%{http_code}\" https://ghproxy.net/https://github.com)",
       "Bash(curl -x http://127.0.0.1:10809 -s --connect-timeout 5 -o /dev/null -w \"%{http_code}\" https://github.com)",
-      "Bash(curl -x http://127.0.0.1:1080 -s --connect-timeout 5 -o /dev/null -w \"%{http_code}\" https://github.com)"
+      "Bash(curl -x http://127.0.0.1:1080 -s --connect-timeout 5 -o /dev/null -w \"%{http_code}\" https://github.com)",
+      "Bash(curl -sI --connect-timeout 10 https://github.com)",
+      "Bash(GIT_SSL_NO_VERIFY=true git push origin main)"
     ]
   }
 }
