@@ -116,7 +116,7 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	}
 
 	// ---- Parse binlogs via mysqlbinlog ----
-	parseRes, err := parseBinlogWithMySQLBinlog(paths, opts.TargetTable, recoveryTime)
+	parseRes, err := parseBinlogWithMySQLBinlog(connCfg, paths, opts.TargetTable, recoveryTime)
 	if err != nil {
 		return fmt.Errorf("flashback: parse binlogs: %w", err)
 	}
@@ -234,10 +234,16 @@ func resolveDataDir(cfg connector.ConnConfig) (string, error) {
 
 // parseBinlogWithMySQLBinlog uses the mysqlbinlog tool to parse binlog files
 // and generate reverse SQL statements.
-func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
+func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
 	parts := strings.SplitN(targetTable, ".", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", targetTable)
+	}
+
+	// Query real column names from MySQL.
+	colNames, err := queryColumnNames(cfg, parts[0], parts[1])
+	if err != nil {
+		log.Printf("WARNING: could not query column names: %v, using positional names", err)
 	}
 
 	// Build mysqlbinlog args.
@@ -283,7 +289,7 @@ func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime
 
 		if strings.Contains(line, "### DELETE FROM "+tablePattern) {
 			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 			}
 			evType = connector.DeleteEvent
 			values = nil
@@ -292,7 +298,7 @@ func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime
 		}
 		if strings.Contains(line, "### INSERT INTO "+tablePattern) {
 			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 			}
 			evType = connector.InsertEvent
 			values = nil
@@ -301,7 +307,7 @@ func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime
 		}
 		if strings.Contains(line, "### UPDATE "+tablePattern) {
 			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 			}
 			evType = connector.UpdateEvent
 			values = nil
@@ -319,14 +325,14 @@ func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime
 
 		// End of row block — flush.
 		if inRow && !strings.HasPrefix(line, "###") {
-			events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 			values = nil
 			inRow = false
 		}
 	}
 
 	if inRow && len(values) > 0 {
-		events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+		events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 	}
 	cmd.Wait()
 
@@ -335,19 +341,26 @@ func parseBinlogWithMySQLBinlog(paths []string, targetTable string, recoveryTime
 }
 
 // makeRowEvent constructs a RowEvent from parsed column values.
-func makeRowEvent(typ connector.EventType, db, table string, vals []interface{}) connector.RowEvent {
+func makeRowEvent(typ connector.EventType, db, table string, vals []interface{}, colNames []string) connector.RowEvent {
+	name := func(i int) string {
+		if i < len(colNames) && colNames[i] != "" {
+			return colNames[i]
+		}
+		return fmt.Sprintf("col_%d", i)
+	}
+
 	ev := connector.RowEvent{Type: typ, Database: db, Table: table}
 	switch typ {
 	case connector.DeleteEvent:
 		m := make(map[string]interface{}, len(vals))
 		for i, v := range vals {
-			m[fmt.Sprintf("col_%d", i)] = v
+			m[name(i)] = v
 		}
 		ev.Before = m
 	case connector.InsertEvent:
 		m := make(map[string]interface{}, len(vals))
 		for i, v := range vals {
-			m[fmt.Sprintf("col_%d", i)] = v
+			m[name(i)] = v
 		}
 		ev.After = m
 	case connector.UpdateEvent:
@@ -356,14 +369,51 @@ func makeRowEvent(typ connector.EventType, db, table string, vals []interface{})
 			before := make(map[string]interface{}, half)
 			after := make(map[string]interface{}, half)
 			for i := 0; i < half; i++ {
-				before[fmt.Sprintf("col_%d", i)] = vals[i]
-				after[fmt.Sprintf("col_%d", i)] = vals[half+i]
+				before[name(i)] = vals[i]
+				after[name(i)] = vals[half+i]
 			}
 			ev.Before = before
 			ev.After = after
 		}
 	}
 	return ev
+}
+
+// queryColumnNames retrieves column names from MySQL information_schema.
+func queryColumnNames(cfg connector.ConnConfig, dbName, tblName string) ([]string, error) {
+	mysqlCfg := mysql.NewConfig()
+	mysqlCfg.User = cfg.User
+	mysqlCfg.Passwd = cfg.Password
+	mysqlCfg.Net = "tcp"
+	mysqlCfg.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	mysqlCfg.ParseTime = true
+
+	db, err := sql.Open("mysql", mysqlCfg.FormatDSN())
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx,
+		"SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+		dbName, tblName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 // parseColumnValue parses a column value from mysqlbinlog output.
