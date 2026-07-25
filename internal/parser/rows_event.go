@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"io"
+	"log"
 	"time"
 )
 
@@ -281,6 +282,7 @@ func colName(tm *TableMap, i int) string {
 }
 
 // readColumnValue reads a single column value from the binary data.
+// If the value can't be fully read, it returns nil instead of failing.
 func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 	colMeta ColumnMeta, values map[string]interface{}, colIdx int, tm *TableMap) (map[string]interface{}, int, error) {
 
@@ -294,35 +296,39 @@ func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 
 	switch colType {
 	case MYSQL_TYPE_TINY:
-		if pos+1 > len(data) {
-			return values, pos, io.ErrUnexpectedEOF
-		}
-		val = int64(int8(data[pos]))
-		pos++
+		val, pos, err = safeRead(data, pos, 1, func(b []byte) interface{} {
+			return int64(int8(b[0]))
+		})
 
 	case MYSQL_TYPE_SHORT:
-		val, pos, err = readInt64Value(data, pos, 2)
+		val, pos, err = safeReadValue(data, pos, 2)
 
 	case MYSQL_TYPE_LONG:
-		val, pos, err = readInt64Value(data, pos, 4)
+		val, pos, err = safeReadValue(data, pos, 4)
 
 	case MYSQL_TYPE_LONGLONG:
-		var v int64
-		v, pos, err = readInt64(data, pos)
-		val = v
+		if pos+8 <= len(data) {
+			val, pos, err = readInt64(data, pos)
+		}
 
 	case MYSQL_TYPE_INT24:
-		var v int32
-		v, pos, err = readInt24(data, pos)
-		val = int64(v)
+		if pos+3 <= len(data) {
+			var v int32
+			v, pos, err = readInt24(data, pos)
+			val = int64(v)
+		}
 
 	case MYSQL_TYPE_FLOAT:
-		var v float32
-		v, pos, err = readFloat32(data, pos)
-		val = float64(v)
+		if pos+4 <= len(data) {
+			var v float32
+			v, pos, err = readFloat32(data, pos)
+			val = float64(v)
+		}
 
 	case MYSQL_TYPE_DOUBLE:
-		val, pos, err = readFloat64(data, pos)
+		if pos+8 <= len(data) {
+			val, pos, err = readFloat64(data, pos)
+		}
 
 	case MYSQL_TYPE_NULL:
 		val = nil
@@ -353,10 +359,11 @@ func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 
 	case MYSQL_TYPE_YEAR:
 		if pos+1 > len(data) {
-			return values, pos, io.ErrUnexpectedEOF
+			err = io.ErrUnexpectedEOF
+		} else {
+			val = int64(1900 + int(data[pos]))
+			pos++
 		}
-		val = int64(1900 + int(data[pos]))
-		pos++
 
 	case MYSQL_TYPE_VARCHAR, MYSQL_TYPE_VAR_STRING:
 		val, pos, err = p.parseVarchar(data, pos, colMeta)
@@ -386,8 +393,7 @@ func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 		val, pos, err = p.parseBlob(data, pos, 4)
 
 	default:
-		// Unknown type: skip 4 bytes speculatively
-		val = nil
+		// Unknown type: skip 4 bytes speculatively.
 		if pos+4 <= len(data) {
 			pos += 4
 		} else {
@@ -396,13 +402,39 @@ func (p *RowEventParser) readColumnValue(data []byte, pos int, colType byte,
 	}
 
 	if err != nil {
-		return values, pos, err
+		log.Printf("WARNING: failed to read column %d (type %d): %v, using nil", colIdx, colType, err)
+		values[key] = nil
+		return values, pos, nil
 	}
 	values[key] = val
 	return values, pos, nil
 }
 
+// safeRead reads n bytes and calls fn with the bytes. Returns nil on EOF.
+func safeRead(data []byte, pos int, n int, fn func([]byte) interface{}) (interface{}, int, error) {
+	if pos+n > len(data) {
+		return nil, pos, io.ErrUnexpectedEOF
+	}
+	return fn(data[pos : pos+n]), pos + n, nil
+}
+
+// safeReadValue reads an n-byte LE signed integer, returning nil on EOF.
+func safeReadValue(data []byte, pos int, n int) (interface{}, int, error) {
+	if pos+n > len(data) {
+		return nil, pos, io.ErrUnexpectedEOF
+	}
+	var v uint64
+	for i := 0; i < n; i++ {
+		v |= uint64(data[pos+i]) << (8 * i)
+	}
+	if n < 8 && (v&(1<<(8*n-1))) != 0 {
+		v |= ^uint64(0) << (8 * n)
+	}
+	return int64(v), pos + n, nil
+}
+
 // readInt64Value reads an n-byte LE signed integer and returns int64.
+// Kept for test compatibility.
 func readInt64Value(data []byte, pos int, n int) (int64, int, error) {
 	if pos+n > len(data) {
 		return 0, pos, io.ErrUnexpectedEOF
@@ -411,7 +443,6 @@ func readInt64Value(data []byte, pos int, n int) (int64, int, error) {
 	for i := 0; i < n; i++ {
 		v |= uint64(data[pos+i]) << (8 * i)
 	}
-	// Sign extend
 	if n < 8 && (v&(1<<(8*n-1))) != 0 {
 		v |= ^uint64(0) << (8 * n)
 	}
