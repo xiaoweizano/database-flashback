@@ -120,7 +120,8 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	})
 	p.Close()
 	if err != nil {
-		return fmt.Errorf("flashback: parse binlogs: %w", err)
+		log.Printf("WARNING: binlog parsing completed with errors: %v", err)
+		log.Printf("Proceeding with %d event(s) recovered from earlier files", len(parseRes.Events))
 	}
 	if len(parseRes.Events) == 0 {
 		return fmt.Errorf("flashback: no row events found for table %q before %s", opts.TargetTable, opts.RecoveryTime)
