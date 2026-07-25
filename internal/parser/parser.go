@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"time"
 
@@ -115,8 +116,10 @@ func (p *BinlogParser) Parse() ([]connector.RowEvent, error) {
 		}
 
 		if err := p.dispatch(hdr, payload); err != nil {
-			return p.events, fmt.Errorf("dispatch event type %s at position %d: %w",
-				hdr.Type.String(), p.reader.Position(), err)
+			// Log and skip problematic events instead of aborting.
+			log.Printf("WARNING: skipping event at position %d (type %s): %v",
+				p.reader.Position(), hdr.Type.String(), err)
+			continue
 		}
 	}
 
