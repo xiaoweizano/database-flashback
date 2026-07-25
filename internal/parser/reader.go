@@ -66,6 +66,7 @@ func (r *BinlogReader) Close() error {
 	r.file = nil
 	r.path = ""
 	r.position = 0
+	r.checksumCRC = false
 	return err
 }
 
