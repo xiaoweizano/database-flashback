@@ -272,7 +272,7 @@ export default function AuditLogPage() {
           dataSource={auditQuery.data}
           columns={columns}
           rowKey="operationId"
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => t('audit.totalEntries').replace('{total}', total) }}
+          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => t('audit.totalEntries').replace('{total}', String(total)) }}
           onRow={(record: AuditEntry) => ({
             onClick: () => navigate(`/audit/${record.operationId}`),
             style: { cursor: 'pointer' },

@@ -19,14 +19,6 @@ import type { AgentInfo, PITROperation, ProgressData } from '../../types';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const stepTitles = [
-  t('pitr.selectAgent'),
-  t('pitr.targetTable'),
-  t('pitr.preflightCheck'),
-  t('pitr.previewChanges'),
-  t('pitr.execute'),
-];
-
 const stateColors: Record<string, string> = {
   preflight: 'processing',
   confirmed: 'processing',
@@ -46,6 +38,13 @@ function getStateTag(state: string) {
 export default function PITRWizardPage() {
   const navigate = useNavigate();
   const { t } = useLocale();
+  const stepTitles = [
+    t('pitr.selectAgent'),
+    t('pitr.targetTable'),
+    t('pitr.preflightCheck'),
+    t('pitr.previewChanges'),
+    t('pitr.execute'),
+  ];
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedAgentHostname, setSelectedAgentHostname] = useState<string | null>(null);
