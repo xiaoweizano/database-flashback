@@ -25,15 +25,6 @@ const stateColors: Record<string, 'processing' | 'success' | 'error' | 'default'
   cancelled: 'default',
 };
 
-function fmtTime(ts: string | undefined | null): string {
-  if (!ts) return '-';
-  const d = dayjs(ts);
-  if (!d.isValid() || d.year() < 2000) return '-';
-  const daysDiff = dayjs().diff(d, 'day');
-  if (daysDiff < 7) return d.locale('zh-cn').fromNow();
-  return d.format('YYYY年M月D日 HH:mm');
-}
-
 export default function PITRDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
