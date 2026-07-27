@@ -79,7 +79,16 @@
     "approved": "已批准",
     "registerAgent": "注册代理",
     "registerSuccess": "代理注册成功",
-    "registerNoToken": "点击下方按钮注册新代理。"
+    "registerNoToken": "点击下方按钮注册新代理。",
+    "registerFailed": "注册代理失败",
+    "rejectTitle": "删除代理",
+    "rejectConfirm": "确定要删除该代理吗？",
+    "rejected": "代理已删除",
+    "rejectFailed": "删除代理失败",
+    "viewDetail": "查看详情",
+    "delete": "删除",
+    "detail": "代理详情",
+    "hostnameRequired": "请输入主机名"
   },
   "pitr": {
     "title": "PITR 恢复",
@@ -112,7 +121,10 @@
     "submit": "提交",
     "search": "搜索",
     "noData": "暂无数据",
-    "language": "语言"
+    "language": "语言",
+    "action": "操作",
+    "close": "关闭",
+    "done": "完成"
   },
   "language": {
     "zh": "中文",

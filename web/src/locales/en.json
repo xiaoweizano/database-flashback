@@ -79,7 +79,16 @@
     "approved": "Approved",
     "registerAgent": "Register Agent",
     "registerSuccess": "Agent registered successfully",
-    "registerNoToken": "Click the button below to register a new agent."
+    "registerNoToken": "Click the button below to register a new agent.",
+    "registerFailed": "Failed to register agent",
+    "rejectTitle": "Delete Agent",
+    "rejectConfirm": "Are you sure you want to delete this agent?",
+    "rejected": "Agent deleted",
+    "rejectFailed": "Failed to delete agent",
+    "viewDetail": "View Details",
+    "delete": "Delete",
+    "detail": "Agent Details",
+    "hostnameRequired": "Please enter the hostname"
   },
   "pitr": {
     "title": "PITR Recovery",
@@ -112,7 +121,10 @@
     "submit": "Submit",
     "search": "Search",
     "noData": "No data",
-    "language": "Language"
+    "language": "Language",
+    "action": "Actions",
+    "close": "Close",
+    "done": "Done"
   },
   "language": {
     "zh": "中文",

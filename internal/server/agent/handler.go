@@ -138,7 +138,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		MySQLVersion:      req.MySQLVersion,
 		Status:            "offline",
 		RegistrationToken: token,
-		Approved:          false,
+		Approved:          true,
 	}
 
 	if err := h.agentStore.Create(agent); err != nil {
