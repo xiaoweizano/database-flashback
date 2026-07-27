@@ -5,7 +5,12 @@ import {
 } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+import 'dayjs/locale/zh-cn';
+import { useLocale } from '../../hooks/useLocale';
 import { getPITRStatus } from '../../api/pitr';
+
+dayjs.extend(relativeTime);
 
 const { Title, Text } = Typography;
 
@@ -20,9 +25,19 @@ const stateColors: Record<string, 'processing' | 'success' | 'error' | 'default'
   cancelled: 'default',
 };
 
+function fmtTime(ts: string | undefined | null): string {
+  if (!ts) return '-';
+  const d = dayjs(ts);
+  if (!d.isValid() || d.year() < 2000) return '-';
+  const daysDiff = dayjs().diff(d, 'day');
+  if (daysDiff < 7) return d.locale('zh-cn').fromNow();
+  return d.format('YYYY年M月D日 HH:mm');
+}
+
 export default function PITRDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useLocale();
 
   const { data: operation, isLoading, error } = useQuery({
     queryKey: ['pitr-status', id],
@@ -38,18 +53,18 @@ export default function PITRDetailPage() {
   });
 
   if (isLoading) {
-    return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Loading operation..." /></div>;
+    return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.loadingPreview')} /></div>;
   }
 
   if (error || !operation) {
     return (
       <Card>
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <Typography.Text type="danger">Failed to load operation details.</Typography.Text>
+          <Typography.Text type="danger">{t('common.error')}</Typography.Text>
           <br /><br />
           <Space>
-            <Button onClick={() => navigate(-1)}>Go Back</Button>
-            <Button onClick={() => navigate('/audit')}>Audit Log</Button>
+            <Button onClick={() => navigate(-1)}>{t('pitr.stepBack')}</Button>
+            <Button onClick={() => navigate('/audit')}>{t('audit.title')}</Button>
           </Space>
         </div>
       </Card>
@@ -69,43 +84,43 @@ export default function PITRDetailPage() {
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
-            <Title level={4} style={{ margin: 0 }}>PITR Operation Detail</Title>
+            <Title level={4} style={{ margin: 0 }}>{t('pitr.detail')}</Title>
             <Text type="secondary">ID: {operation.id}</Text>
           </div>
           <Badge status={stateColor} text={operation.state} />
         </div>
 
         <Descriptions bordered column={1}>
-          <Descriptions.Item label="Operation ID">{operation.id}</Descriptions.Item>
-          <Descriptions.Item label="Agent ID">{operation.agentId}</Descriptions.Item>
-          <Descriptions.Item label="Target Table">{operation.targetTable}</Descriptions.Item>
-          <Descriptions.Item label="Recovery Time">
+          <Descriptions.Item label={t('audit.operationId')}>{operation.id}</Descriptions.Item>
+          <Descriptions.Item label={t('audit.agentId')}>{operation.agentId}</Descriptions.Item>
+          <Descriptions.Item label={t('pitr.targetTable')}>{operation.targetTable}</Descriptions.Item>
+          <Descriptions.Item label={t('pitr.recoveryTime')}>
             {dayjs(operation.recoveryTime).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
-          <Descriptions.Item label="Mode">{operation.mode}</Descriptions.Item>
-          <Descriptions.Item label="State">
+          <Descriptions.Item label={t('pitr.mode')}>{operation.mode}</Descriptions.Item>
+          <Descriptions.Item label={t('pitr.state')}>
             <Tag color={stateColor}>{operation.state}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Created At">
+          <Descriptions.Item label={t('pitr.createdAt')}>
             {dayjs(operation.createdAt).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
-          <Descriptions.Item label="Updated At">
+          <Descriptions.Item label="更新时间">
             {dayjs(operation.updatedAt).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
         </Descriptions>
 
         {operation.preflightResult && (
-          <Card size="small" title="Preflight Results" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.preflightCompleted')} style={{ marginTop: 16 }}>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Binlog Files">
+              <Descriptions.Item label={t('pitr.binlogFiles')}>
                 {operation.preflightResult.binlogFiles?.join(', ') || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="Earliest Time">
+              <Descriptions.Item label={t('pitr.earliestTime')}>
                 {operation.preflightResult.earliestTime
                   ? dayjs(operation.preflightResult.earliestTime).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="Estimated Size">
+              <Descriptions.Item label={t('pitr.estimatedSize')}>
                 {operation.preflightResult.estimatedSize
                   ? `${(operation.preflightResult.estimatedSize / 1024 / 1024).toFixed(1)} MB`
                   : '-'}
@@ -115,16 +130,16 @@ export default function PITRDetailPage() {
         )}
 
         {operation.parseResult && (
-          <Card size="small" title="Parse Results" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.estimatedChanges')} style={{ marginTop: 16 }}>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Rows Affected">
+              <Descriptions.Item label={t('pitr.rowsAffected')}>
                 {operation.parseResult.rowsAffected?.toLocaleString() || '0'}
               </Descriptions.Item>
             </Descriptions>
 
             {operation.parseResult.reverseSql && operation.parseResult.reverseSql.length > 0 ? (
               <div style={{ marginTop: 16 }}>
-                <Text strong style={{ marginBottom: 8, display: 'block' }}>Reverse SQL</Text>
+                <Text strong style={{ marginBottom: 8, display: 'block' }}>{t('pitr.sampleSql')}</Text>
                 <Table
                   dataSource={operation.parseResult.reverseSql}
                   rowKey="sequence"
@@ -138,7 +153,7 @@ export default function PITRDetailPage() {
                       width: 40,
                     },
                     {
-                      title: 'Type',
+                      title: {t('pitr.mode')},
                       dataIndex: 'sqlType',
                       key: 'sqlType',
                       width: 80,
@@ -148,13 +163,13 @@ export default function PITRDetailPage() {
                       },
                     },
                     {
-                      title: 'Table',
+                      title: {t('pitr.targetTable')},
                       dataIndex: 'tableName',
                       key: 'tableName',
                       width: 120,
                     },
                     {
-                      title: 'Reverse SQL',
+                      title: {t('pitr.sampleSql')},
                       dataIndex: 'reverseSql',
                       key: 'reverseSql',
                       ellipsis: true,
@@ -165,7 +180,7 @@ export default function PITRDetailPage() {
                       ),
                     },
                     {
-                      title: 'Rows',
+                      title: {t('pitr.rowsAffected')},
                       dataIndex: 'rowsAffected',
                       key: 'rowsAffected',
                       width: 60,
@@ -175,7 +190,7 @@ export default function PITRDetailPage() {
               </div>
             ) : operation.parseResult.sqlSample ? (
               <div style={{ marginTop: 16 }}>
-                <Text strong style={{ marginBottom: 8, display: 'block' }}>SQL Sample</Text>
+                <Text strong style={{ marginBottom: 8, display: 'block' }}>{t('pitr.sampleSql')}</Text>
                 <pre style={{
                   background: '#f5f5f5',
                   padding: 8,
@@ -190,22 +205,22 @@ export default function PITRDetailPage() {
               </div>
             ) : (
               <div style={{ marginTop: 16 }}>
-                <Text type="secondary">No reverse SQL available</Text>
+                <Text type="secondary">{t('common.noData')}</Text>
               </div>
             )}
           </Card>
         )}
 
         {operation.execResult && (
-          <Card size="small" title="Execution Results" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.executingRecovery')} style={{ marginTop: 16 }}>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Rows Restored">
+              <Descriptions.Item label={t('pitr.rowsRestored')}>
                 {operation.execResult.rowsRestored?.toLocaleString() || '0'}
               </Descriptions.Item>
-              <Descriptions.Item label="Duration">
+              <Descriptions.Item label={t('pitr.duration')}>
                 {operation.execResult.duration || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="Executed At">
+              <Descriptions.Item label={t('pitr.createdAt')}>
                 {operation.execResult.executedAt
                   ? dayjs(operation.execResult.executedAt).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
@@ -215,21 +230,21 @@ export default function PITRDetailPage() {
         )}
 
         {operation.error && (
-          <Card size="small" title="Error" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('common.error')} style={{ marginTop: 16 }}>
             <Text type="danger">{operation.error}</Text>
           </Card>
         )}
 
         {operation.progress && (
-          <Card size="small" title="Progress" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.batchProgress')} style={{ marginTop: 16 }}>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Batches">
+              <Descriptions.Item label={t('pitr.batches')}>
                 {operation.progress.batchesComplete} / {operation.progress.batchesTotal}
               </Descriptions.Item>
-              <Descriptions.Item label="Rows Restored">
+              <Descriptions.Item label={t('pitr.rowsRestored')}>
                 {operation.progress.rowsRestored?.toLocaleString() || '0'}
               </Descriptions.Item>
-              <Descriptions.Item label="Estimated Remaining">
+              <Descriptions.Item label={t('pitr.estRemaining')}>
                 {operation.progress.estimatedRemaining || '-'}
               </Descriptions.Item>
             </Descriptions>
