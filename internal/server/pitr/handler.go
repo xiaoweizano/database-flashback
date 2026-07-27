@@ -1,13 +1,18 @@
 package pitr
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -492,6 +497,165 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// parseBinlogRemote uses mysqlbinlog --read-from-remote-server to parse binlog
+// files from a remote MySQL server. This is the fallback when binlog files are
+// not accessible on the local filesystem.
+func (h *Handler) parseBinlogRemote(cfg connector.ConnConfig, binlogNames []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
+	parts := strings.SplitN(targetTable, ".", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", targetTable)
+	}
+	recoveryStr := recoveryTime.Format("2006-01-02 15:04:05")
+	args := []string{
+		"--no-defaults",
+		"--base64-output=DECODE-ROWS",
+		"--verbose",
+		"--stop-datetime=" + recoveryStr,
+		"--read-from-remote-server",
+		"--host=" + cfg.Host,
+		"--port=" + strconv.Itoa(cfg.Port),
+		"--user=" + cfg.User,
+		"--password=" + cfg.Password,
+		"--protocol=TCP",
+	}
+	args = append(args, binlogNames...)
+	
+	cmd := exec.Command("mysqlbinlog", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mysqlbinlog pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mysqlbinlog stderr: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("mysqlbinlog start: %w", err)
+	}
+	
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			if t := s.Text(); t != "" {
+				log.Printf("pitr: mysqlbinlog: %s", t)
+			}
+		}
+	}()
+	
+	tablePattern := "`" + parts[0] + "`.`" + parts[1] + "`"
+	var events []connector.RowEvent
+	var evType connector.EventType
+	var values []interface{}
+	inRow := false
+	
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "### DELETE FROM "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.DeleteEvent
+			values = nil
+			inRow = true
+			continue
+		}
+		if strings.Contains(line, "### INSERT INTO "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.InsertEvent
+			values = nil
+			inRow = true
+			continue
+		}
+		if strings.Contains(line, "### UPDATE "+tablePattern) {
+			if inRow {
+				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			}
+			evType = connector.UpdateEvent
+			values = nil
+			inRow = true
+			continue
+		}
+		if inRow && strings.HasPrefix(line, "###   @") {
+			eq := strings.IndexByte(line, '=')
+			if eq > 0 {
+				val := parseColumnValue(line[eq+1:])
+				values = append(values, val)
+			}
+		}
+		if inRow && !strings.HasPrefix(line, "###") {
+			events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+			values = nil
+			inRow = false
+		}
+	}
+	if inRow && len(values) > 0 {
+		events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
+	}
+	_ = cmd.Wait()
+	log.Printf("pitr: mysqlbinlog remote parsed %d row event(s) for %s", len(events), targetTable)
+	return &connector.ParseResult{Events: events, TotalRows: int64(len(events))}, nil
+}
+
+// makeRowEvent constructs a RowEvent from mysqlbinlog parsed column values.
+func makeRowEvent(typ connector.EventType, db, table string, vals []interface{}) connector.RowEvent {
+	ev := connector.RowEvent{Type: typ, Database: db, Table: table}
+	switch typ {
+	case connector.DeleteEvent:
+		m := make(map[string]interface{}, len(vals))
+		for i, v := range vals {
+			m[fmt.Sprintf("col_%d", i)] = v
+		}
+		ev.Before = m
+	case connector.InsertEvent:
+		m := make(map[string]interface{}, len(vals))
+		for i, v := range vals {
+			m[fmt.Sprintf("col_%d", i)] = v
+		}
+		ev.After = m
+	case connector.UpdateEvent:
+		if len(vals)%2 == 0 {
+			half := len(vals) / 2
+			before := make(map[string]interface{}, half)
+			after := make(map[string]interface{}, half)
+			for i := 0; i < half; i++ {
+				before[fmt.Sprintf("col_%d", i)] = vals[i]
+				after[fmt.Sprintf("col_%d", i)] = vals[half+i]
+			}
+			ev.Before = before
+			ev.After = after
+		}
+	}
+	return ev
+}
+
+// parseColumnValue parses a column value from mysqlbinlog text output.
+func parseColumnValue(s string) interface{} {
+	s = strings.TrimSpace(s)
+	if s == "NULL" || s == "'NULL'" {
+		return nil
+	}
+	if strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'") {
+		return strings.Trim(s, "'")
+	}
+	var i int64
+	if _, err := fmt.Sscanf(s, "%d", &i); err == nil {
+		if strings.Contains(s, ".") {
+			var f float64
+			fmt.Sscanf(s, "%f", &f)
+			return f
+		}
+		return i
+	}
+	var f float64
+	if _, err := fmt.Sscanf(s, "%f", &f); err == nil {
+		return f
+	}
+	return s
+}
+
 // ---------- background operation execution ----------
 
 // failOperation transitions the operation to the failed state with the given
@@ -588,16 +752,32 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		return
 	}
 
-	bp := parser.NewBinlogParser()
-	bp.SetSkipChecksum(true)
+	var parseRes *connector.ParseResult
 
-	parseRes, err := bp.ParseFiles(paths, parser.ParseOptions{
-		EndTime:     op.RecoveryTime,
-		TargetTable: op.TargetTable,
-	})
-	if err != nil {
-		h.failOperation(op, "parse binlogs: %v", err)
-		return
+	// Check if binlog files are accessible locally; if not, try mysqlbinlog remote.
+	if len(paths) > 0 {
+		if _, statErr := os.Stat(paths[0]); os.IsNotExist(statErr) {
+			log.Printf("pitr: binlog files not accessible locally, trying mysqlbinlog remote for op %s", op.ID)
+			parseRes, err = h.parseBinlogRemote(connCfg, binlogNames, op.TargetTable, op.RecoveryTime)
+			if err != nil {
+				h.failOperation(op, "parse binlogs (remote): %v", err)
+				return
+			}
+		}
+	}
+
+	// Fall back to local native parser if remote was not attempted or not needed.
+	if parseRes == nil {
+		bp := parser.NewBinlogParser()
+		bp.SetSkipChecksum(true)
+		parseRes, err = bp.ParseFiles(paths, parser.ParseOptions{
+			EndTime:     op.RecoveryTime,
+			TargetTable: op.TargetTable,
+		})
+		if err != nil {
+			h.failOperation(op, "parse binlogs: %v", err)
+			return
+		}
 	}
 
 	reverseSqls, err := parser.ReverseSQLBatch(parseRes.Events, nil)
