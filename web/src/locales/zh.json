@@ -148,7 +148,10 @@
     "startRecovery": "开始恢复",
     "continuePreview": "继续预览",
     "executeRecovery": "执行恢复",
-    "viewAuditLog": "查看审计日志"
+    "viewAuditLog": "查看审计日志",
+    "mysqlDsn": "MySQL 连接串",
+    "mysqlDsnHelp": "格式：user:password@tcp(host:port)/database",
+    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database"
   },
   "audit": {
     "title": "审计日志",

@@ -26,6 +26,10 @@ type Connector interface {
 	// behaviour is governed by opts (batch size, dry-run flag).
 	ExecuteRollback(ctx context.Context, sqls []string, opts ExecOptions) (*ExecResult, error)
 
+	// GetBinlogDir returns the filesystem directory containing binary log files
+	// by querying the MySQL server variable `log_bin_basename`.
+	GetBinlogDir(ctx context.Context) (string, error)
+
 	// Preflight runs a suite of readiness checks against the database and returns
 	// a consolidated result. Checks include MySQL version, binlog format, user
 	// privileges, disk space, column metadata, and foreign-key dependencies.

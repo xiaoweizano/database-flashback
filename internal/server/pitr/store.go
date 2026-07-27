@@ -18,6 +18,7 @@ type Operation struct {
 	RecoveryTime time.Time       `json:"recoveryTime"`
 	Mode         string          `json:"mode"` // "preview" or "execute"
 	State        OperationState  `json:"state"`
+		DSN          string          `json:"-"`     // MySQL DSN, never exposed to frontend
 	PreflightRes *PreflightResult `json:"preflightResult,omitempty"`
 	ParseRes     *ParseSummary   `json:"parseResult,omitempty"`
 	ExecRes      *ExecSummary    `json:"execResult,omitempty"`

@@ -50,6 +50,7 @@ export default function PITRWizardPage() {
   const [selectedAgentHostname, setSelectedAgentHostname] = useState<string | null>(null);
   const [targetTable, setTargetTable] = useState('');
   const [recoveryTime, setRecoveryTime] = useState('');
+  const [mysqlDsn, setMysqlDsn] = useState('');
   const [operationId, setOperationId] = useState<string | null>(null);
 
   // Fetch agents list
@@ -97,6 +98,7 @@ export default function PITRWizardPage() {
       target_table: targetTable,
       recovery_time: dayjs(recoveryTime).toISOString(),
       mode: 'execute',
+      mysql_dsn: mysqlDsn,
     }),
     onSuccess: (data) => {
       setOperationId(data.operationId);
@@ -145,12 +147,12 @@ export default function PITRWizardPage() {
   }, [currentStep, operationId, cancelMutation]);
 
   const handleNextFromStep1 = useCallback(() => {
-    if (!selectedAgentId || !targetTable || !recoveryTime) {
+    if (!selectedAgentId || !targetTable || !recoveryTime || !mysqlDsn) {
       message.warning(t('common.error'));
       return;
     }
     startMutation.mutate();
-  }, [selectedAgentId, targetTable, recoveryTime, startMutation]);
+  }, [selectedAgentId, targetTable, recoveryTime, mysqlDsn, startMutation]);
 
   // Compute progress bar percent
   const progressPercent = useMemo(() => {
@@ -245,6 +247,13 @@ export default function PITRWizardPage() {
           style={{ width: '100%' }}
           value={recoveryTime ? dayjs(recoveryTime) : null}
           onChange={(date) => setRecoveryTime(date ? date.toISOString() : '')}
+        />
+      </Form.Item>
+      <Form.Item label={t('pitr.mysqlDsn')} required help={t('pitr.mysqlDsnHelp')}>
+        <Input.Password
+          placeholder={t('pitr.mysqlDsnPlaceholder')}
+          value={mysqlDsn}
+          onChange={(e) => setMysqlDsn(e.target.value)}
         />
       </Form.Item>
     </Form>

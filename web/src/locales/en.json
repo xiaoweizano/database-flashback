@@ -148,7 +148,10 @@
     "startRecovery": "Start Recovery",
     "continuePreview": "Continue to Preview",
     "executeRecovery": "Execute Recovery",
-    "viewAuditLog": "View Audit Log"
+    "viewAuditLog": "View Audit Log",
+    "mysqlDsn": "MySQL DSN",
+    "mysqlDsnHelp": "Format: user:password@tcp(host:port)/database",
+    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database"
   },
   "audit": {
     "title": "Audit Log",

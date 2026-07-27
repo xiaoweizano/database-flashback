@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -156,6 +157,30 @@ func (m *MySQLConnector) GetBinlogFiles(ctx context.Context) ([]BinlogFile, erro
 	}
 
 	return files, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetBinlogDir
+// ---------------------------------------------------------------------------
+
+func (m *MySQLConnector) GetBinlogDir(ctx context.Context) (string, error) {
+	if m.db == nil {
+		return "", fmt.Errorf("connector: not connected")
+	}
+
+	var name, value string
+	if err := m.db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'log_bin_basename'").Scan(&name, &value); err != nil {
+		return "", fmt.Errorf("connector: query log_bin_basename: %w", err)
+	}
+	if value == "" {
+		return "", fmt.Errorf("connector: log_bin_basename is empty")
+	}
+
+	dir := filepath.Dir(value)
+	if dir != "." {
+		return dir + string(filepath.Separator), nil
+	}
+	return "", nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,20 @@
 package pitr
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/a-shan/mysql-pitr/internal/config"
+	"github.com/a-shan/mysql-pitr/internal/connector"
+	"github.com/a-shan/mysql-pitr/internal/parser"
 	"github.com/a-shan/mysql-pitr/internal/server/agent"
 	"github.com/a-shan/mysql-pitr/internal/server/audit"
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
@@ -48,6 +54,7 @@ type startRequest struct {
 	TargetTable  string `json:"target_table"`
 	RecoveryTime string `json:"recovery_time"`
 	Mode         string `json:"mode"` // "preview" or "execute"
+	MySQLDSN     string `json:"mysql_dsn"`
 }
 
 type startResponse struct {
@@ -203,9 +210,9 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.AgentID == "" || req.TargetTable == "" || req.RecoveryTime == "" || req.Mode == "" {
+	if req.AgentID == "" || req.TargetTable == "" || req.RecoveryTime == "" || req.Mode == "" || req.MySQLDSN == "" {
 		writeError(w, http.StatusBadRequest,
-			"agent_id, target_table, recovery_time, and mode are required")
+			"agent_id, target_table, recovery_time, mode, and mysql_dsn are required")
 		return
 	}
 	if req.Mode != "preview" && req.Mode != "execute" {
@@ -245,6 +252,7 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		TargetTable:  req.TargetTable,
 		RecoveryTime: recoveryTime,
 		Mode:         req.Mode,
+		DSN:          req.MySQLDSN,
 		State:        StatePreflight,
 	}
 
@@ -255,7 +263,7 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 
 	// Launch the asynchronous workflow simulation. In production this would
 	// be dispatched to a worker queue.
-	go h.simulateOperation(op, operator)
+	go h.runOperation(op, operator)
 
 	writeJSON(w, http.StatusCreated, startResponse{
 		OperationID: op.ID,
@@ -484,94 +492,218 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- background simulation ----------
+// ---------- background operation execution ----------
 
-// simulateOperation advances the operation through the state machine in a
-// background goroutine. Each phase includes a small artificial delay to
-// simulate real processing time. In production this would be replaced by
-// actual preflight checks, binlog parsing, and SQL execution.
-func (h *Handler) simulateOperation(op *Operation, operator string) {
+// failOperation transitions the operation to the failed state with the given
+// error message and persists the change.
+func (h *Handler) failOperation(op *Operation, format string, args ...interface{}) {
+	op.State = StateFailed
+	op.Error = fmt.Sprintf(format, args...)
+	_ = h.opStore.Update(op)
+	log.Printf("pitr: operation %s failed: %s", op.ID, op.Error)
+}
+
+// runOperation advances the operation through the state machine using real
+// MySQL connections, binlog parsing, and SQL execution. It replaces the
+// previous simulateOperation which used hardcoded fake data.
+func (h *Handler) runOperation(op *Operation, operator string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("pitr: simulateOperation panicked for op %s: %v", op.ID, r)
+			h.failOperation(op, "panic: %v", r)
 		}
 	}()
 
+	// ---- Parse DSN ----
+	connCfg, err := config.ParseDSNToConnConfig(op.DSN)
+	if err != nil {
+		h.failOperation(op, "invalid MySQL DSN: %v", err)
+		return
+	}
+
+	// ---- Connect ----
+	conn := connector.NewMySQLConnector()
+	if err := conn.Connect(connCfg); err != nil {
+		h.failOperation(op, "connect to MySQL failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+
+	// ================================================================
 	// Phase 1: preflight -> confirmed
+	// ================================================================
+	pCtx, pCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer pCancel()
+
+	pfRes, err := conn.Preflight(pCtx)
+	if err != nil {
+		h.failOperation(op, "preflight error: %v", err)
+		return
+	}
+	if pfRes.Status == connector.PreflightFail {
+		h.failOperation(op, "preflight checks failed")
+		return
+	}
+
+	binlogs, err := conn.GetBinlogFiles(pCtx)
+	if err != nil {
+		h.failOperation(op, "list binlog files: %v", err)
+		return
+	}
+	binlogNames := make([]string, len(binlogs))
+	var totalSize int64
+	for i, bf := range binlogs {
+		binlogNames[i] = bf.Name
+		totalSize += bf.Size
+	}
+
+	binlogDir, err := conn.GetBinlogDir(pCtx)
+	if err != nil {
+		h.failOperation(op, "resolve binlog directory: %v", err)
+		return
+	}
+	pCancel()
+
+	paths := make([]string, 0, len(binlogNames))
+	for _, name := range binlogNames {
+		paths = append(paths, filepath.Join(binlogDir, name))
+	}
+
 	if !h.tryTransition(op, StateConfirmed) {
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
 	op.PreflightRes = &PreflightResult{
 		CheckedAt:     time.Now(),
-		BinlogFiles:   []string{"mysql-bin.000042", "mysql-bin.000043"},
+		BinlogFiles:   binlogNames,
 		EarliestTime:  time.Now().Add(-24 * time.Hour),
-		EstimatedSize: 256 * 1024 * 1024,
+		EstimatedSize: totalSize,
 	}
 	_ = h.opStore.Update(op)
 
-	// Phase 2: confirmed -> parsing
+	// ================================================================
+	// Phase 2: confirmed -> parsing -> previewed
+	// ================================================================
 	if !h.tryTransition(op, StateParsing) {
 		return
 	}
-	time.Sleep(300 * time.Millisecond)
-	_ = h.opStore.Update(op)
 
-	// Phase 3: parsing -> previewed
+	bp := parser.NewBinlogParser()
+	bp.SetSkipChecksum(true)
+
+	parseRes, err := bp.ParseFiles(paths, parser.ParseOptions{
+		EndTime:     op.RecoveryTime,
+		TargetTable: op.TargetTable,
+	})
+	if err != nil {
+		h.failOperation(op, "parse binlogs: %v", err)
+		return
+	}
+
+	reverseSqls, err := parser.ReverseSQLBatch(parseRes.Events, nil)
+	if err != nil {
+		h.failOperation(op, "generate reverse SQL: %v", err)
+		return
+	}
+
+	maxEntries := len(reverseSqls)
+	if maxEntries > 1000 {
+		maxEntries = 1000
+	}
+	reverseEntries := make([]ReverseSqlEntry, 0, maxEntries)
+	for i := 0; i < maxEntries; i++ {
+		ev := parseRes.Events[i]
+		reverseEntries = append(reverseEntries, ReverseSqlEntry{
+			Sequence:     i + 1,
+			SqlType:      string(ev.Type),
+			TableName:    ev.Table,
+			OriginalSql:  "",
+			ReverseSql:   reverseSqls[i],
+			RowsAffected: 1,
+		})
+	}
+
+	sqlSample := ""
+	if len(reverseSqls) > 0 {
+		sqlSample = reverseSqls[0]
+	}
+
 	if !h.tryTransition(op, StatePreviewed) {
 		return
 	}
-	time.Sleep(500 * time.Millisecond)
-	reverseSql := []ReverseSqlEntry{
-		{Sequence: 1, SqlType: "INSERT", TableName: "orders", OriginalSql: "INSERT INTO orders (id, user_id, total) VALUES (1001, 42, 299.99)", ReverseSql: "DELETE FROM orders WHERE id = 1001", RowsAffected: 1},
-		{Sequence: 2, SqlType: "INSERT", TableName: "orders", OriginalSql: "INSERT INTO orders (id, user_id, total) VALUES (1002, 42, 149.50)", ReverseSql: "DELETE FROM orders WHERE id = 1002", RowsAffected: 1},
-		{Sequence: 3, SqlType: "UPDATE", TableName: "orders", OriginalSql: "UPDATE orders SET status = 'shipped' WHERE id = 1001", ReverseSql: "UPDATE orders SET status = 'pending' WHERE id = 1001", RowsAffected: 1},
-		{Sequence: 4, SqlType: "DELETE", TableName: "order_items", OriginalSql: "DELETE FROM order_items WHERE order_id = 1003", ReverseSql: "INSERT INTO order_items (id, order_id, product, qty) VALUES (1, 1003, 'Widget A', 2), (2, 1003, 'Widget B', 1)", RowsAffected: 2},
-		{Sequence: 5, SqlType: "UPDATE", TableName: "users", OriginalSql: "UPDATE users SET balance = balance - 299.99 WHERE id = 42", ReverseSql: "UPDATE users SET balance = balance + 299.99 WHERE id = 42", RowsAffected: 1},
-	}
 	op.ParseRes = &ParseSummary{
 		ParsedAt:     time.Now(),
-		RowsAffected: 1250,
-		SQLSample:    reverseSql[0].ReverseSql,
-		ReverseSql:   reverseSql,
+		RowsAffected: int64(len(reverseSqls)),
+		SQLSample:    sqlSample,
+		ReverseSql:   reverseEntries,
 	}
 	_ = h.opStore.Update(op)
 
+	h.recordAudit(op, operator, "previewed", "")
+
+	// Preview mode stops here
 	if op.Mode == "preview" {
-		h.recordAudit(op, operator, "previewed", "")
 		return
 	}
 
-	// Phase 4: previewed -> executing
+	// ================================================================
+	// Phase 3: previewed -> executing -> completed
+	// ================================================================
 	if !h.tryTransition(op, StateExecuting) {
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
-	totalBatches := 10
+
+	batchSize := 100
+	totalBatches := int(math.Ceil(float64(len(reverseSqls)) / float64(batchSize)))
+	if totalBatches < 1 {
+		totalBatches = 1
+	}
+
 	op.Progress = &ProgressInfo{
 		BatchesTotal:      totalBatches,
 		BatchesComplete:   0,
 		RowsRestored:      0,
-		EstimatedRemaining: "30s",
+		EstimatedRemaining: "calculating...",
 	}
 	_ = h.opStore.Update(op)
 
-	// Simulate batched execution with incremental progress.
-	for i := 1; i <= totalBatches; i++ {
-		time.Sleep(300 * time.Millisecond)
-		op.Progress.BatchesComplete = i
-		op.Progress.RowsRestored = int64(i) * 125
-		remaining := totalBatches - i
-		op.Progress.EstimatedRemaining = fmt.Sprintf("%ds", remaining*3)
+	var totalRows int64
+	execStart := time.Now()
+
+	for i := 0; i < len(reverseSqls); i += batchSize {
+		end := i + batchSize
+		if end > len(reverseSqls) {
+			end = len(reverseSqls)
+		}
+		batch := reverseSqls[i:end]
+
+		_, err := conn.ExecuteRollback(ctx, batch, connector.ExecOptions{
+			BatchSize: len(batch),
+		})
+		if err != nil {
+			h.failOperation(op, "execution error at batch %d: %v",
+				op.Progress.BatchesComplete, err)
+			return
+		}
+
+		totalRows += int64(len(batch))
+		op.Progress.BatchesComplete++
+		op.Progress.RowsRestored = totalRows
+
+		elapsed := time.Since(execStart)
+		if op.Progress.BatchesComplete > 0 {
+			perBatch := elapsed / time.Duration(op.Progress.BatchesComplete)
+			remaining := perBatch * time.Duration(totalBatches-op.Progress.BatchesComplete)
+			op.Progress.EstimatedRemaining = remaining.Round(time.Second).String()
+		}
 		_ = h.opStore.Update(op)
 	}
 
-	// Final: executing -> completed
 	op.State = StateCompleted
 	op.ExecRes = &ExecSummary{
 		ExecutedAt:   time.Now(),
-		RowsRestored: op.Progress.RowsRestored,
-		Duration:     fmt.Sprintf("%.1fs", float64(totalBatches)*0.3),
+		RowsRestored: totalRows,
+		Duration:     time.Since(execStart).Round(time.Second).String(),
 	}
 	op.Progress.BatchesComplete = totalBatches
 	op.Progress.EstimatedRemaining = "0s"
