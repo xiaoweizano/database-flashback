@@ -113,7 +113,7 @@ export default function AgentDetailPage() {
           <Descriptions.Item label="ID">{agent.id}</Descriptions.Item>
           <Descriptions.Item label="Hostname">{agent.hostname}</Descriptions.Item>
           <Descriptions.Item label="MySQL Version">
-            {agent.mysqlVersion || '-'}
+            {agent.mySQLVersion || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="Status">
             <Badge status={statusBadge[agent.status]} text={agent.status} />

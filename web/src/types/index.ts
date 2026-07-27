@@ -21,7 +21,7 @@ export interface AgentInfo {
   id: string;
   orgId: string;
   hostname: string;
-  mysqlVersion: string;
+  mySQLVersion: string;
   status: 'online' | 'offline' | 'error';
   approved: boolean;
   lastSeen: string;

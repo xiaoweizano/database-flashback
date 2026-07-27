@@ -199,7 +199,7 @@ export default function PITRWizardPage() {
           >
             {onlineAgents.map((agent: AgentInfo) => (
               <Option key={agent.id} value={agent.id}>
-                {agent.hostname} - MySQL {agent.mysqlVersion || 'N/A'}
+                {agent.hostname} - MySQL {agent.mySQLVersion || 'N/A'}
               </Option>
             ))}
           </Select>
@@ -212,7 +212,7 @@ export default function PITRWizardPage() {
                 <Tag color="green">online</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="MySQL Version">
-                {onlineAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.mysqlVersion || '-'}
+                {onlineAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.mySQLVersion || '-'}
               </Descriptions.Item>
             </Descriptions>
           </Card>

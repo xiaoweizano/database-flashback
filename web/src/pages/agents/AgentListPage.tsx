@@ -6,7 +6,7 @@ import {
   Input, Form, Descriptions, Tooltip,
 } from 'antd';
 import {
-  CopyOutlined, CheckCircleOutlined, PlusOutlined,
+  CheckCircleOutlined, PlusOutlined,
   DeleteOutlined, EyeOutlined, CheckOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -32,7 +32,7 @@ function fmtTime(ts: string | undefined | null): string {
   const d = dayjs(ts);
   const daysDiff = dayjs().diff(d, 'day');
   if (daysDiff < 7) return d.locale('zh-cn').fromNow();
-  return d.format('YYYY-MM-DD HH:mm');
+  return d.format('YYYY年M月D日 HH:mm');
 }
 
 export default function AgentListPage() {
@@ -88,31 +88,11 @@ export default function AgentListPage() {
 
   const handleCloseRegister = () => {
     setRegisterOpen(false);
-    // Reset form and result AFTER the close animation
     setTimeout(() => {
       form.resetFields();
       setRegResult(null);
       registerMutation.reset();
     }, 300);
-  };
-
-  const handleCopyToken = (token: string) => {
-    const text = `agent --config=${token}`;
-    navigator.clipboard?.writeText
-      ? navigator.clipboard.writeText(text).then(() => message.success(t('agents.copied')))
-      : fallbackCopy(text);
-  };
-
-  const fallbackCopy = (text: string) => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-    message.success(t('agents.copied'));
   };
 
   const showRejectConfirm = (id: string) => {
@@ -143,8 +123,8 @@ export default function AgentListPage() {
     },
     {
       title: t('agents.mysqlVersion'),
-      dataIndex: 'mysqlVersion',
-      key: 'mysqlVersion',
+      dataIndex: 'mySQLVersion',
+      key: 'mySQLVersion',
       width: 120,
       render: (v: string) => v || '-',
     },
@@ -152,20 +132,20 @@ export default function AgentListPage() {
       title: t('agents.lastSeen'),
       dataIndex: 'lastSeen',
       key: 'lastSeen',
-      width: 160,
+      width: 180,
       render: (date: string) => fmtTime(date),
     },
     {
       title: t('agents.created'),
       dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 160,
+      width: 180,
       render: (date: string) => fmtTime(date),
     },
     {
       title: t('common.action'),
       key: 'action',
-      width: 120,
+      width: 100,
       render: (_: unknown, record: AgentInfo) => (
         <Space size="small">
           <Tooltip title={t('agents.viewDetail')}>
@@ -240,13 +220,20 @@ export default function AgentListPage() {
                 {t('agents.registerDesc')}
               </Text>
             </div>
-            <Input.Search
-              value={`agent --config=${regResult.token}`}
-              readOnly
-              enterButton={<CopyOutlined />}
-              style={{ maxWidth: 480 }}
-              onSearch={() => handleCopyToken(regResult.token)}
-            />
+            <Text
+              copyable={{ text: `agent --config=${regResult.token}` }}
+              style={{
+                fontFamily: 'monospace',
+                fontSize: 13,
+                background: '#f5f5f5',
+                padding: '4px 8px',
+                borderRadius: 4,
+                maxWidth: 420,
+              }}
+              ellipsis
+            >
+              agent --config={regResult.token}
+            </Text>
             <Button size="small" onClick={() => setRegResult(null)}>
               {t('common.close')}
             </Button>
@@ -270,19 +257,29 @@ export default function AgentListPage() {
             <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
               {t('agents.registerDesc')}
             </Text>
-            <Input.Search
-              value={`agent --config=${regResult.token}`}
-              readOnly
-              enterButton={<CopyOutlined />}
-              size="large"
-              style={{ maxWidth: '100%' }}
-              onSearch={() => handleCopyToken(regResult.token)}
-            />
-            <div style={{ marginTop: 24 }}>
-              <Button type="primary" size="large" onClick={handleCloseRegister}>
-                <CheckOutlined /> {t('common.done')}
-              </Button>
+            <div
+              style={{
+                background: '#f5f5f5',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 24,
+                textAlign: 'left',
+              }}
+            >
+              <Text
+                copyable={{ text: `agent --config=${regResult.token}` }}
+                style={{
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  wordBreak: 'break-all',
+                }}
+              >
+                agent --config={regResult.token}
+              </Text>
             </div>
+            <Button type="primary" size="large" onClick={handleCloseRegister}>
+              <CheckOutlined /> {t('common.done')}
+            </Button>
           </div>
         ) : (
           <Form form={form} layout="vertical">
@@ -328,7 +325,7 @@ export default function AgentListPage() {
             <Descriptions.Item label="ID">{detailAgent.id}</Descriptions.Item>
             <Descriptions.Item label={t('agents.hostname')}>{detailAgent.hostname}</Descriptions.Item>
             <Descriptions.Item label={t('agents.mysqlVersion')}>
-              {detailAgent.mysqlVersion || '-'}
+              {detailAgent.mySQLVersion || '-'}
             </Descriptions.Item>
             <Descriptions.Item label={t('agents.status')}>
               <Badge status={statusBadge[detailAgent.status]} text={detailAgent.status} />
