@@ -30,6 +30,7 @@ const statusBadge: Record<string, 'success' | 'error' | 'default'> = {
 function fmtTime(ts: string | undefined | null): string {
   if (!ts) return '-';
   const d = dayjs(ts);
+  if (!d.isValid() || d.year() < 2000) return '-';
   const daysDiff = dayjs().diff(d, 'day');
   if (daysDiff < 7) return d.locale('zh-cn').fromNow();
   return d.format('YYYY年M月D日 HH:mm');
@@ -211,28 +212,28 @@ export default function AgentListPage() {
           size="small"
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div>
               <Text strong style={{ color: '#52c41a' }}>
                 <CheckOutlined /> {t('agents.registerSuccess')}
               </Text>
               <br />
               <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('agents.registerDesc')}
+                {t('agents.registerNextStep')}
               </Text>
             </div>
             <Text
-              copyable={{ text: `agent --config=${regResult.token}` }}
+              copyable
               style={{
                 fontFamily: 'monospace',
                 fontSize: 13,
                 background: '#f5f5f5',
                 padding: '4px 8px',
                 borderRadius: 4,
-                maxWidth: 420,
+                maxWidth: 200,
               }}
               ellipsis
             >
-              agent --config={regResult.token}
+              {regResult.token}
             </Text>
             <Button size="small" onClick={() => setRegResult(null)}>
               {t('common.close')}
@@ -254,32 +255,15 @@ export default function AgentListPage() {
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
             <CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a', marginBottom: 16 }} />
             <Title level={4}>{t('agents.registerSuccess')}</Title>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              {t('agents.registerDesc')}
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+              {t('agents.registerNextStep')}
             </Text>
-            <div
-              style={{
-                background: '#f5f5f5',
-                borderRadius: 8,
-                padding: '12px 16px',
-                marginBottom: 24,
-                textAlign: 'left',
-              }}
-            >
-              <Text
-                copyable={{ text: `agent --config=${regResult.token}` }}
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 14,
-                  wordBreak: 'break-all',
-                }}
-              >
-                agent --config={regResult.token}
-              </Text>
+            <div style={{ marginTop: 24, marginBottom: 24 }}>
+              <Button type="primary" size="large" onClick={handleCloseRegister}>
+                <CheckOutlined /> {t('common.done')}
+              </Button>
             </div>
-            <Button type="primary" size="large" onClick={handleCloseRegister}>
-              <CheckOutlined /> {t('common.done')}
-            </Button>
+          </div>
           </div>
         ) : (
           <Form form={form} layout="vertical">

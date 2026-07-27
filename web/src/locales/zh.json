@@ -64,6 +64,7 @@
     "title": "代理",
     "register": "注册新代理",
     "registerDesc": "在要监控的服务器上运行以下命令：",
+    "registerNextStep": "代理已注册，可在 PITR 恢复中选择该代理执行闪回操作。",
     "hostname": "主机名",
     "status": "状态",
     "mysqlVersion": "MySQL 版本",

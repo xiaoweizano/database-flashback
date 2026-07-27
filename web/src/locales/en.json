@@ -64,6 +64,7 @@
     "title": "Agents",
     "register": "Register a New Agent",
     "registerDesc": "Run this command on the server you want to monitor:",
+    "registerNextStep": "Agent registered. You can now select it when creating a PITR recovery operation.",
     "hostname": "Hostname",
     "status": "Status",
     "mysqlVersion": "MySQL Version",
