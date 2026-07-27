@@ -3,10 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Card, Descriptions, Badge, Button, Spin, Typography, Space, Tag, Table,
 } from 'antd';
-import { ArrowLeftOutlined, CaretDownOutlined, CaretRightOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getPITRStatus } from '../../api/pitr';
-import type { ReverseSqlEntry } from '../../types';
 
 const { Title, Text } = Typography;
 

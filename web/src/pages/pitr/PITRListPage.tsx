@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Card, Table, Button, Typography, Spin, Empty, Tag,
-  DatePicker, Space, message,
+  DatePicker, Space,
 } from 'antd';
 import { HistoryOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
