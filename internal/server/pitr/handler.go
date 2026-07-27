@@ -78,11 +78,12 @@ type cancelResponse struct {
 }
 
 type previewResponse struct {
-	OperationID  string        `json:"operationId"`
-	RowsAffected int64         `json:"rowsAffected"`
-	SQLSample    string        `json:"sqlSample"`
-	ParsedAt     time.Time     `json:"parsedAt"`
-	State        OperationState `json:"state"`
+	OperationID  string           `json:"operationId"`
+	RowsAffected int64            `json:"rowsAffected"`
+	SQLSample    string           `json:"sqlSample"`
+	ReverseSql   []ReverseSqlEntry `json:"reverseSql,omitempty"`
+	ParsedAt     time.Time        `json:"parsedAt"`
+	State        OperationState   `json:"state"`
 }
 
 type progressResponse struct {
@@ -123,6 +124,66 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 // ---------- handlers ----------
+
+// List returns all PITR operations for an organisation, optionally filtered
+// by time range.
+//
+// GET /api/pitr?org_id=X&from=ISO&to=ISO
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromRequest(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	orgID := r.URL.Query().Get("org_id")
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "org_id query parameter is required")
+		return
+	}
+
+	// Verify org membership.
+	members, err := h.orgStore.ListMembers(orgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "organisation not found")
+		return
+	}
+	if !orgMemberContains(members, userID) {
+		writeError(w, http.StatusForbidden, "not a member of this organisation")
+		return
+	}
+
+	ops, err := h.opStore.ListByOrg(orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+
+	var filtered []*Operation
+	for _, op := range ops {
+		if fromStr != "" {
+			from, err := time.Parse(time.RFC3339, fromStr)
+			if err == nil && op.CreatedAt.Before(from) {
+				continue
+			}
+		}
+		if toStr != "" {
+			to, err := time.Parse(time.RFC3339, toStr)
+			if err == nil && op.CreatedAt.After(to) {
+				continue
+			}
+		}
+		filtered = append(filtered, op)
+	}
+	if filtered == nil {
+		filtered = []*Operation{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"operations": filtered})
+}
 
 // Start initiates a new PITR recovery operation. The operation is created in
 // the preflight state and an asynchronous goroutine advances it through the
@@ -363,6 +424,7 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		OperationID:  op.ID,
 		RowsAffected: op.ParseRes.RowsAffected,
 		SQLSample:    op.ParseRes.SQLSample,
+		ReverseSql:   op.ParseRes.ReverseSql,
 		ParsedAt:     op.ParseRes.ParsedAt,
 		State:        op.State,
 	})
@@ -460,10 +522,18 @@ func (h *Handler) simulateOperation(op *Operation, operator string) {
 		return
 	}
 	time.Sleep(500 * time.Millisecond)
+	reverseSql := []ReverseSqlEntry{
+		{Sequence: 1, SqlType: "INSERT", TableName: "orders", OriginalSql: "INSERT INTO orders (id, user_id, total) VALUES (1001, 42, 299.99)", ReverseSql: "DELETE FROM orders WHERE id = 1001", RowsAffected: 1},
+		{Sequence: 2, SqlType: "INSERT", TableName: "orders", OriginalSql: "INSERT INTO orders (id, user_id, total) VALUES (1002, 42, 149.50)", ReverseSql: "DELETE FROM orders WHERE id = 1002", RowsAffected: 1},
+		{Sequence: 3, SqlType: "UPDATE", TableName: "orders", OriginalSql: "UPDATE orders SET status = 'shipped' WHERE id = 1001", ReverseSql: "UPDATE orders SET status = 'pending' WHERE id = 1001", RowsAffected: 1},
+		{Sequence: 4, SqlType: "DELETE", TableName: "order_items", OriginalSql: "DELETE FROM order_items WHERE order_id = 1003", ReverseSql: "INSERT INTO order_items (id, order_id, product, qty) VALUES (1, 1003, 'Widget A', 2), (2, 1003, 'Widget B', 1)", RowsAffected: 2},
+		{Sequence: 5, SqlType: "UPDATE", TableName: "users", OriginalSql: "UPDATE users SET balance = balance - 299.99 WHERE id = 42", ReverseSql: "UPDATE users SET balance = balance + 299.99 WHERE id = 42", RowsAffected: 1},
+	}
 	op.ParseRes = &ParseSummary{
 		ParsedAt:     time.Now(),
 		RowsAffected: 1250,
-		SQLSample:    "DELETE FROM orders WHERE id IN (1001, 1002, ..., 1250);",
+		SQLSample:    reverseSql[0].ReverseSql,
+		ReverseSql:   reverseSql,
 	}
 	_ = h.opStore.Update(op)
 

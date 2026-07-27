@@ -28,6 +28,7 @@ type AgentStore interface {
 	Get(id string) (*AgentRecord, error)
 	ListByOrg(orgID string) ([]*AgentRecord, error)
 	Update(agent *AgentRecord) error
+	Delete(id string) error
 }
 
 // InMemoryAgentStore is a thread-safe in-memory implementation of AgentStore.
@@ -99,6 +100,18 @@ func (s *InMemoryAgentStore) Update(agent *AgentRecord) error {
 		return fmt.Errorf("agent not found: %s", agent.ID)
 	}
 	s.agents[agent.ID] = agent
+	return nil
+}
+
+// Delete removes an agent record by ID.
+func (s *InMemoryAgentStore) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.agents[id]; !ok {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	delete(s.agents, id)
 	return nil
 }
 

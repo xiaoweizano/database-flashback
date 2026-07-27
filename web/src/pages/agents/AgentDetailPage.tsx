@@ -1,9 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Descriptions, Badge, Button, Spin, Typography, message, Space } from 'antd';
-import { ArrowLeftOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Badge, Button, Spin, Typography, message, Space, Modal } from 'antd';
+import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { getAgent, approveAgent } from '../../api/agents';
+import { getAgent, approveAgent, rejectAgent } from '../../api/agents';
 
 const { Title } = Typography;
 
@@ -35,6 +35,28 @@ export default function AgentDetailPage() {
     },
   });
 
+  const rejectMutation = useMutation({
+    mutationFn: () => rejectAgent(id!),
+    onSuccess: () => {
+      message.success('Agent rejected');
+      navigate('/agents');
+    },
+    onError: () => {
+      message.error('Failed to reject agent');
+    },
+  });
+
+  const showRejectConfirm = () => {
+    Modal.confirm({
+      title: 'Reject Agent',
+      content: 'Are you sure you want to reject this agent?',
+      okText: 'Confirm',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: () => rejectMutation.mutate(),
+    });
+  };
+
   if (isLoading) {
     return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" /></div>;
   }
@@ -65,14 +87,26 @@ export default function AgentDetailPage() {
             <Title level={4} style={{ margin: 0 }}>{agent.hostname}</Title>
             <Badge status={statusBadge[agent.status]} text={agent.status} />
           </div>
-          <Button
-            type="primary"
-            icon={<CheckCircleOutlined />}
-            onClick={() => approveMutation.mutate()}
-            loading={approveMutation.isPending}
-          >
-            Approve Agent
-          </Button>
+          <Space>
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              onClick={() => approveMutation.mutate()}
+              loading={approveMutation.isPending}
+            >
+              Approve Agent
+            </Button>
+            {!agent.approved && (
+              <Button
+                danger
+                icon={<CloseCircleOutlined />}
+                onClick={showRejectConfirm}
+                loading={rejectMutation.isPending}
+              >
+                Reject Agent
+              </Button>
+            )}
+          </Space>
         </div>
 
         <Descriptions bordered column={1}>

@@ -250,6 +250,55 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, approveAgentResponse{Agent: agent})
 }
 
+// Reject deletes an agent. Only organisation admins may reject agents.
+//
+// POST /api/agents/{id}/reject
+func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromRequest(r)
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	agentID := chi.URLParam(r, "id")
+	if agentID == "" {
+		writeError(w, http.StatusBadRequest, "missing agent id")
+		return
+	}
+
+	agent, err := h.agentStore.Get(agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Verify the requester is an admin of the agent's org.
+	members, err := h.orgStore.ListMembers(agent.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "organisation not found")
+		return
+	}
+	isAdmin := false
+	for _, m := range members {
+		if m.UserID == userID && m.Role == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+	if !isAdmin {
+		writeError(w, http.StatusForbidden,
+			"only organisation admins can reject agents")
+		return
+	}
+
+	if err := h.agentStore.Delete(agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
 // Get returns details for a single agent.
 //
 // GET /api/agents/{id}

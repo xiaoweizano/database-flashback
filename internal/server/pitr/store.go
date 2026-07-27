@@ -37,9 +37,21 @@ type PreflightResult struct {
 
 // ParseSummary contains the output of the binlog parsing phase.
 type ParseSummary struct {
-	ParsedAt     time.Time `json:"parsedAt"`
-	RowsAffected int64     `json:"rowsAffected"`
-	SQLSample    string    `json:"sqlSample"`
+	ParsedAt     time.Time         `json:"parsedAt"`
+	RowsAffected int64             `json:"rowsAffected"`
+	SQLSample    string            `json:"sqlSample"`
+	ReverseSql   []ReverseSqlEntry `json:"reverseSql,omitempty"`
+}
+
+// ReverseSqlEntry represents a single parsed binlog entry with its
+// corresponding reverse SQL statement.
+type ReverseSqlEntry struct {
+	Sequence    int    `json:"sequence"`
+	SqlType     string `json:"sqlType"`
+	TableName   string `json:"tableName"`
+	OriginalSql string `json:"originalSql"`
+	ReverseSql  string `json:"reverseSql"`
+	RowsAffected int64  `json:"rowsAffected"`
 }
 
 // ExecSummary contains the output of the recovery execution phase.

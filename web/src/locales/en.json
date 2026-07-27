@@ -75,7 +75,8 @@
     "loadFailed": "Failed to load agents. Please try again later.",
     "noOrg": "No organization found",
     "noOrgDesc": "Create an organization first to manage agents.",
-    "goToOrg": "Go to Organization"
+    "goToOrg": "Go to Organization",
+    "approved": "Approved"
   },
   "pitr": {
     "title": "PITR Recovery",

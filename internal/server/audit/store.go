@@ -23,11 +23,12 @@ type AuditEntry struct {
 // AuditFilter holds optional query parameters used when filtering audit
 // entries.
 type AuditFilter struct {
-	OrgID   string
-	From    time.Time
-	To      time.Time
-	Status  string
-	AgentID string
+	OrgID       string
+	OperationID string
+	From        time.Time
+	To          time.Time
+	Status      string
+	AgentID     string
 }
 
 // AuditStore defines the persistence contract for audit log entries.
@@ -87,6 +88,9 @@ func (s *InMemoryAuditStore) Query(filter AuditFilter) ([]AuditEntry, error) {
 			continue
 		}
 		if filter.AgentID != "" && e.AgentID != filter.AgentID {
+			continue
+		}
+		if filter.OperationID != "" && e.OperationID != filter.OperationID {
 			continue
 		}
 		result = append(result, e)

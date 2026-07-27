@@ -75,7 +75,8 @@
     "loadFailed": "加载代理失败，请稍后重试。",
     "noOrg": "未找到组织",
     "noOrgDesc": "请先创建组织以管理代理。",
-    "goToOrg": "前往组织"
+    "goToOrg": "前往组织",
+    "approved": "已批准"
   },
   "pitr": {
     "title": "PITR 恢复",

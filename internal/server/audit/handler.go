@@ -101,6 +101,9 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	if a := r.URL.Query().Get("agent_id"); a != "" {
 		filter.AgentID = a
 	}
+		if oid := r.URL.Query().Get("operation_id"); oid != "" {
+			filter.OperationID = oid
+		}
 
 	entries, err := h.auditStore.Query(filter)
 	if err != nil {
@@ -143,6 +146,27 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := AuditFilter{OrgID: orgID}
+
+	if fromStr := r.URL.Query().Get("from"); fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			filter.From = t
+		}
+	}
+	if toStr := r.URL.Query().Get("to"); toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			filter.To = t
+		}
+	}
+	if s := r.URL.Query().Get("status"); s != "" {
+		filter.Status = s
+	}
+	if a := r.URL.Query().Get("agent_id"); a != "" {
+		filter.AgentID = a
+	}
+		if oid := r.URL.Query().Get("operation_id"); oid != "" {
+			filter.OperationID = oid
+		}
+
 	entries, err := h.auditStore.Query(filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -79,6 +79,7 @@ func NewRouter() *chi.Mux {
 
 			r.Route("/{id}", func(r chi.Router) {
 				r.Post("/approve", agentHandler.Approve)
+				r.Post("/reject", agentHandler.Reject)
 				r.Get("/", agentHandler.Get)
 			})
 		})
@@ -86,6 +87,7 @@ func NewRouter() *chi.Mux {
 		// PITR workflow endpoints.
 		r.Route("/api/pitr", func(r chi.Router) {
 			r.Post("/start", pitrHandler.Start)
+			r.Get("/", pitrHandler.List)
 
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/status", pitrHandler.Status)

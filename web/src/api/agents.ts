@@ -15,3 +15,7 @@ export async function getAgent(id: string): Promise<AgentInfo> {
 export async function approveAgent(id: string): Promise<void> {
   await apiClient.post(`/agents/${id}/approve`);
 }
+
+export async function rejectAgent(id: string): Promise<void> {
+  await apiClient.post(`/agents/${id}/reject`);
+}

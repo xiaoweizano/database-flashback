@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Table, Badge, Card, Typography, Button, Space, Spin, message } from 'antd';
-import { CopyOutlined } from '@ant-design/icons';
+import { Table, Badge, Card, Typography, Button, Space, Spin, message, Tag } from 'antd';
+import { CopyOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { listAgents } from '../../api/agents';
 import { listOrgs } from '../../api/org';
@@ -63,6 +63,14 @@ export default function AgentListPage() {
       dataIndex: 'createdAt',
       key: 'createdAt',
       render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
+    },
+    {
+      title: t('agents.approved'),
+      dataIndex: 'approved',
+      key: 'approved',
+      render: (approved: boolean) => approved
+        ? <Tag icon={<CheckCircleOutlined />} color="success">Yes</Tag>
+        : <Tag icon={<CloseCircleOutlined />} color="error">No</Tag>,
     },
   ];
 

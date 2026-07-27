@@ -19,9 +19,11 @@ export interface Member {
 
 export interface AgentInfo {
   id: string;
+  orgId: string;
   hostname: string;
   mysqlVersion: string;
   status: 'online' | 'offline' | 'error';
+  approved: boolean;
   lastSeen: string;
   createdAt: string;
 }
@@ -63,6 +65,16 @@ export interface ParseResult {
   parsedAt: string;
   rowsAffected: number;
   sqlSample: string;
+  reverseSql?: ReverseSqlEntry[];
+}
+
+export interface ReverseSqlEntry {
+  sequence: number;
+  sqlType: string;
+  tableName: string;
+  originalSql: string;
+  reverseSql: string;
+  rowsAffected: number;
 }
 
 export interface ExecResult {

@@ -1,11 +1,12 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Card, Descriptions, Badge, Button, Spin, Typography, Space, Tag,
+  Card, Descriptions, Badge, Button, Spin, Typography, Space, Tag, Table,
 } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CaretDownOutlined, CaretRightOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getPITRStatus } from '../../api/pitr';
+import type { ReverseSqlEntry } from '../../types';
 
 const { Title, Text } = Typography;
 
@@ -120,7 +121,62 @@ export default function PITRDetailPage() {
               <Descriptions.Item label="Rows Affected">
                 {operation.parseResult.rowsAffected?.toLocaleString() || '0'}
               </Descriptions.Item>
-              <Descriptions.Item label="SQL Sample">
+            </Descriptions>
+
+            {operation.parseResult.reverseSql && operation.parseResult.reverseSql.length > 0 ? (
+              <div style={{ marginTop: 16 }}>
+                <Text strong style={{ marginBottom: 8, display: 'block' }}>Reverse SQL</Text>
+                <Table
+                  dataSource={operation.parseResult.reverseSql}
+                  rowKey="sequence"
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: '#',
+                      dataIndex: 'sequence',
+                      key: 'sequence',
+                      width: 40,
+                    },
+                    {
+                      title: 'Type',
+                      dataIndex: 'sqlType',
+                      key: 'sqlType',
+                      width: 80,
+                      render: (type: string) => {
+                        const color = type === 'INSERT' ? 'success' : type === 'UPDATE' ? 'processing' : 'error';
+                        return <Tag color={color}>{type}</Tag>;
+                      },
+                    },
+                    {
+                      title: 'Table',
+                      dataIndex: 'tableName',
+                      key: 'tableName',
+                      width: 120,
+                    },
+                    {
+                      title: 'Reverse SQL',
+                      dataIndex: 'reverseSql',
+                      key: 'reverseSql',
+                      ellipsis: true,
+                      render: (sql: string) => (
+                        <Text copyable style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                          {sql.length > 80 ? sql.substring(0, 80) + '...' : sql}
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: 'Rows',
+                      dataIndex: 'rowsAffected',
+                      key: 'rowsAffected',
+                      width: 60,
+                    },
+                  ]}
+                />
+              </div>
+            ) : operation.parseResult.sqlSample ? (
+              <div style={{ marginTop: 16 }}>
+                <Text strong style={{ marginBottom: 8, display: 'block' }}>SQL Sample</Text>
                 <pre style={{
                   background: '#f5f5f5',
                   padding: 8,
@@ -130,10 +186,14 @@ export default function PITRDetailPage() {
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
                 }}>
-                  {operation.parseResult.sqlSample || '-'}
+                  {operation.parseResult.sqlSample}
                 </pre>
-              </Descriptions.Item>
-            </Descriptions>
+              </div>
+            ) : (
+              <div style={{ marginTop: 16 }}>
+                <Text type="secondary">No reverse SQL available</Text>
+              </div>
+            )}
           </Card>
         )}
 

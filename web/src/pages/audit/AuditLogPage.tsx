@@ -63,7 +63,12 @@ export default function AuditLogPage() {
       return;
     }
     try {
-      const blob = await exportAuditCsv(orgId);
+      const blob = await exportAuditCsv(orgId, {
+        from: dateRange?.[0],
+        to: dateRange?.[1],
+        status: statusFilter,
+        agentId: agentFilter,
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -267,7 +272,7 @@ export default function AuditLogPage() {
           rowKey="operationId"
           pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `${total} entries` }}
           onRow={(record: AuditEntry) => ({
-            onClick: () => navigate(`/pitr/${record.operationId}`),
+            onClick: () => navigate(`/audit/${record.operationId}`),
             style: { cursor: 'pointer' },
           })}
           scroll={{ x: 900 }}
