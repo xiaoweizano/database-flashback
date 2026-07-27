@@ -153,7 +153,7 @@ export default function PITRDetailPage() {
                       width: 40,
                     },
                     {
-                      title: {t('pitr.mode')},
+                      title: t('pitr.mode'),
                       dataIndex: 'sqlType',
                       key: 'sqlType',
                       width: 80,
@@ -163,13 +163,13 @@ export default function PITRDetailPage() {
                       },
                     },
                     {
-                      title: {t('pitr.targetTable')},
+                      title: t('pitr.targetTable'),
                       dataIndex: 'tableName',
                       key: 'tableName',
                       width: 120,
                     },
                     {
-                      title: {t('pitr.sampleSql')},
+                      title: t('pitr.sampleSql'),
                       dataIndex: 'reverseSql',
                       key: 'reverseSql',
                       ellipsis: true,
@@ -180,7 +180,7 @@ export default function PITRDetailPage() {
                       ),
                     },
                     {
-                      title: {t('pitr.rowsAffected')},
+                      title: t('pitr.rowsAffected'),
                       dataIndex: 'rowsAffected',
                       key: 'rowsAffected',
                       width: 60,
