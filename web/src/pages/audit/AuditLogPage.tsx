@@ -7,6 +7,7 @@ import {
 } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { useLocale } from '../../hooks/useLocale';
 import { listOrgs } from '../../api/org';
 import { listAuditEntries, exportAuditCsv } from '../../api/audit';
 import { listAgents } from '../../api/agents';
@@ -25,6 +26,7 @@ const statusColors: Record<string, string> = {
 
 export default function AuditLogPage() {
   const navigate = useNavigate();
+  const { t } = useLocale();
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [agentFilter, setAgentFilter] = useState<string | undefined>(undefined);
@@ -59,7 +61,7 @@ export default function AuditLogPage() {
 
   const handleExport = useCallback(async () => {
     if (!orgId) {
-      message.warning('No organisation found');
+      message.warning(t('audit.noOrgTitle'));
       return;
     }
     try {
@@ -77,9 +79,9 @@ export default function AuditLogPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      message.success('Audit log exported');
+      message.success(t('common.success'));
     } catch {
-      message.error('Failed to export audit log');
+      message.error(t('common.error'));
     }
   }, [orgId]);
 
@@ -152,7 +154,7 @@ export default function AuditLogPage() {
   // ---- Loading/Error/Empty states ----
 
   if (orgsQuery.isLoading) {
-    return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Loading organisation..." /></div>;
+    return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('audit.loadingOrg')} /></div>;
   }
 
   if (orgsQuery.error || !orgId) {
@@ -161,12 +163,12 @@ export default function AuditLogPage() {
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Alert
             type="error"
-            message="No Organisation Found"
-            description="You need to be a member of an organisation to view audit logs."
+            message={t('audit.noOrgTitle')}
+            description={t('audit.noOrgDesc')}
             showIcon
           />
           <br />
-          <Button type="primary" onClick={() => navigate('/org')}>Go to Organisation</Button>
+          <Button type="primary" onClick={() => navigate('/org')}>{t('audit.goToOrg')}</Button>
         </div>
       </Card>
     );
@@ -175,7 +177,7 @@ export default function AuditLogPage() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>Audit Log</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('audit.title')}</Title>
         <Space>
           <Button icon={<DownloadOutlined />} onClick={handleExport}>
             Export CSV
@@ -186,31 +188,31 @@ export default function AuditLogPage() {
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <div>
-            <Text strong style={{ marginRight: 8 }}>Date Range</Text>
+            <Text strong style={{ marginRight: 8 }}>{t('audit.dateRange')}</Text>
             <RangePicker
               onChange={handleDateChange}
               value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
             />
           </div>
           <div>
-            <Text strong style={{ marginRight: 8 }}>Status</Text>
+            <Text strong style={{ marginRight: 8 }}>{t('audit.status')}</Text>
             <Select
-              placeholder="All statuses"
+              placeholder={t('audit.allStatuses')}
               allowClear
               style={{ width: 140 }}
               value={statusFilter}
               onChange={setStatusFilter}
             >
-              <Select.Option value="completed">Completed</Select.Option>
-              <Select.Option value="failed">Failed</Select.Option>
-              <Select.Option value="cancelled">Cancelled</Select.Option>
-              <Select.Option value="previewed">Previewed</Select.Option>
+              <Select.Option value="completed">{t('audit.completed')}</Select.Option>
+              <Select.Option value="failed">{t('audit.failed')}</Select.Option>
+              <Select.Option value="cancelled">{t('audit.cancelled')}</Select.Option>
+              <Select.Option value="previewed">{t('audit.previewed')}</Select.Option>
             </Select>
           </div>
           <div>
-            <Text strong style={{ marginRight: 8 }}>Agent</Text>
+            <Text strong style={{ marginRight: 8 }}>{t('audit.agentId')}</Text>
             <Select
-              placeholder="All agents"
+              placeholder={t('audit.allAgents')}
               allowClear
               style={{ width: 180 }}
               value={agentFilter}
@@ -228,36 +230,36 @@ export default function AuditLogPage() {
             Refresh
           </Button>
           {(dateRange || statusFilter || agentFilter) && (
-            <Button onClick={clearFilters}>Clear Filters</Button>
+            <Button onClick={clearFilters}>{t('audit.clearFilters')}</Button>
           )}
         </Space>
       </Card>
 
       {auditQuery.isLoading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <Spin size="large" tip="Loading audit log..." />
+          <Spin size="large" tip={t('audit.loadingAudit')} />
         </div>
       ) : auditQuery.error ? (
         <Card>
           <Alert
             type="error"
-            message="Failed to load audit log"
-            action={<Button size="small" onClick={() => auditQuery.refetch()}>Retry</Button>}
+            message={t('audit.loadFailed')}
+            action={<Button size="small" onClick={() => auditQuery.refetch()}>{t('common.retry')}</Button>}
             showIcon
           />
         </Card>
       ) : (auditQuery.data ?? []).length === 0 ? (
         <Card>
-          <Empty description="No audit entries found">
+          <Empty description={t('audit.noEntries')}>
             <Text type="secondary">
               {dateRange || statusFilter || agentFilter
-                ? 'Try adjusting the filters or clearing them.'
-                : 'No PITR operations have been performed yet.'}
+                ? t('audit.noEntriesFiltered')
+                : t('audit.noEntriesDefault')}
             </Text>
             <br /><br />
             <Space>
               {(dateRange || statusFilter || agentFilter) && (
-                <Button onClick={clearFilters}>Clear Filters</Button>
+                <Button onClick={clearFilters}>{t('audit.clearFilters')}</Button>
               )}
               <Button type="primary" onClick={() => navigate('/pitr/new')}>
                 Start New Recovery
@@ -270,7 +272,7 @@ export default function AuditLogPage() {
           dataSource={auditQuery.data}
           columns={columns}
           rowKey="operationId"
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `${total} entries` }}
+          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => t('audit.totalEntries').replace('{total}', total) }}
           onRow={(record: AuditEntry) => ({
             onClick: () => navigate(`/audit/${record.operationId}`),
             style: { cursor: 'pointer' },

@@ -10,6 +10,7 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { useLocale } from '../../hooks/useLocale';
 import { listAgents } from '../../api/agents';
 import { listOrgs } from '../../api/org';
 import { startPITR, getPITRStatus, getPITRProgress, cancelPITR } from '../../api/pitr';
@@ -18,7 +19,13 @@ import type { AgentInfo, PITROperation, ProgressData } from '../../types';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const stepTitles = ['Select Agent', 'Target Table', 'Preflight Check', 'Preview Changes', 'Execute'];
+const stepTitles = [
+  t('pitr.selectAgent'),
+  t('pitr.targetTable'),
+  t('pitr.preflightCheck'),
+  t('pitr.previewChanges'),
+  t('pitr.execute'),
+];
 
 const stateColors: Record<string, string> = {
   preflight: 'processing',
@@ -38,6 +45,7 @@ function getStateTag(state: string) {
 
 export default function PITRWizardPage() {
   const navigate = useNavigate();
+  const { t } = useLocale();
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedAgentHostname, setSelectedAgentHostname] = useState<string | null>(null);
@@ -94,10 +102,10 @@ export default function PITRWizardPage() {
     onSuccess: (data) => {
       setOperationId(data.operationId);
       setCurrentStep(2);
-      notification.success({ message: 'PITR operation started', description: `Operation ID: ${data.operationId}` });
+      notification.success({ message: t('pitr.startRecovery'), description: `ID: ${data.operationId}` });
     },
     onError: (err: Error) => {
-      notification.error({ message: 'Failed to start PITR operation', description: err.message });
+      notification.error({ message: t('common.error'), description: err.message });
     },
   });
 
@@ -105,11 +113,11 @@ export default function PITRWizardPage() {
   const cancelMutation = useMutation({
     mutationFn: () => cancelPITR(operationId!),
     onSuccess: () => {
-      notification.success({ message: 'Operation cancelled' });
+      notification.success({ message: t('pitr.operationCancelled' });
       navigate('/pitr/new');
     },
     onError: (err: Error) => {
-      notification.error({ message: 'Failed to cancel', description: err.message });
+      notification.error({ message: t('common.error'), description: err.message });
     },
   });
 
@@ -139,7 +147,7 @@ export default function PITRWizardPage() {
 
   const handleNextFromStep1 = useCallback(() => {
     if (!selectedAgentId || !targetTable || !recoveryTime) {
-      message.warning('Please fill in all fields');
+      message.warning(t('common.error')});
       return;
     }
     startMutation.mutate();
@@ -159,34 +167,34 @@ export default function PITRWizardPage() {
 
   const renderStep0 = () => {
     if (agentsQuery.isLoading) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Loading agents..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.loadingAgents')} /></div>;
     }
     if (agentsQuery.error) {
       return (
         <Alert
           type="error"
-          message="Failed to load agents"
-          description="Could not fetch the agent list. Please try again."
-          action={<Button size="small" danger onClick={() => agentsQuery.refetch()}>Retry</Button>}
+          message={t('pitr.loadAgentsFailed')}
+          description={t('pitr.loadAgentsDesc')}
+          action={<Button size="small" danger onClick={() => agentsQuery.refetch()}>{t('common.retry')}</Button>}
           showIcon
         />
       );
     }
     if (availableAgents.length === 0) {
       return (
-        <Empty description="No agents found">
-          <Text type="secondary">Register an agent first to start a PITR recovery.</Text>
+        <Empty description={t('pitr.noAgents')}>
+          <Text type="secondary">{t('pitr.noAgentsDesc')}</Text>
           <br /><br />
-          <Button type="primary" onClick={() => navigate('/agents')}>Go to Agents</Button>
+          <Button type="primary" onClick={() => navigate('/agents')}>{t('pitr.goToAgents')}</Button>
         </Empty>
       );
     }
 
     return (
       <Form layout="vertical">
-        <Form.Item label="Select Agent" required>
+        <Form.Item label={t('pitr.selectAgent')} required>
           <Select
-            placeholder="Choose an agent"
+            placeholder={t('pitr.selectAgentPlaceholder')}
             style={{ width: '100%' }}
             value={selectedAgentId}
             onChange={(value) => {
@@ -205,15 +213,15 @@ export default function PITRWizardPage() {
           </Select>
         </Form.Item>
         {selectedAgentId && (
-          <Card size="small" title="Agent Details" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.agentDetails')} style={{ marginTop: 16 }}>
             <Descriptions column={1} size="small">
-              <Descriptions.Item label="Hostname">{selectedAgentHostname}</Descriptions.Item>
-              <Descriptions.Item label="Status">
+              <Descriptions.Item label={t('pitr.hostname')}>{selectedAgentHostname}</Descriptions.Item>
+              <Descriptions.Item label={t('pitr.status')}>
                 <Tag color={availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.status === 'online' ? 'green' : 'default'}>
                   {availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.status || '-'}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="MySQL Version">
+              <Descriptions.Item label={t('pitr.mysqlVersion')}>
                 {availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.mySQLVersion || '-'}
               </Descriptions.Item>
             </Descriptions>
@@ -225,14 +233,14 @@ export default function PITRWizardPage() {
 
   const renderStep1 = () => (
     <Form layout="vertical">
-      <Form.Item label="Target Table" required help="Format: schema.table_name (e.g. mydb.orders)">
+      <Form.Item label={t('pitr.targetTable')} required help={t('pitr.targetTableHelp')}>
         <Input
           placeholder="e.g. mydb.orders"
           value={targetTable}
           onChange={(e) => setTargetTable(e.target.value)}
         />
       </Form.Item>
-      <Form.Item label="Recovery Time" required>
+      <Form.Item label={t('pitr.recoveryTime')} required>
         <DatePicker
           showTime
           style={{ width: '100%' }}
@@ -245,14 +253,14 @@ export default function PITRWizardPage() {
 
   const renderStep2 = () => {
     if (statusQuery.isLoading) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Running preflight checks..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.runningPreflight')} /></div>;
     }
     if (statusQuery.error) {
       return (
         <Alert
           type="error"
-          message="Failed to fetch status"
-          action={<Button size="small" onClick={() => statusQuery.refetch()}>Retry</Button>}
+          message={t('pitr.fetchStatusFailed')}
+          action={<Button size="small" onClick={() => statusQuery.refetch()}>{t('common.retry')}</Button>}
           showIcon
         />
       );
@@ -260,39 +268,39 @@ export default function PITRWizardPage() {
 
     const op = statusQuery.data;
     if (!op) {
-      return <Empty description="No operation data" />;
+      return <Empty description={t('common.noData')} />;
     }
 
     if (op.state === 'preflight') {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Running preflight checks..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.runningPreflight')} /></div>;
     }
 
     const preflight = op.preflightResult;
     if (!preflight) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Waiting for preflight results..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.runningPreflight')} /></div>;
     }
 
     return (
       <div>
         <Alert
           type="info"
-          message="Preflight checks completed"
-          description="Review the binlog configuration details below."
+          message={t('pitr.preflightCompleted')}
+          description={t('pitr.preflightDesc')}
           showIcon
           style={{ marginBottom: 16 }}
         />
-        <Card size="small" title="Binlog Configuration">
+        <Card size="small" title={t('pitr.binlogConfig')}>
           <Descriptions column={1} size="small">
-            <Descriptions.Item label="Binlog Files">
+            <Descriptions.Item label={t('pitr.binlogFiles')}>
               {preflight.binlogFiles?.join(', ') || '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="Earliest Available Time">
+            <Descriptions.Item label={t('pitr.earliestTime')}>
               {preflight.earliestTime ? dayjs(preflight.earliestTime).format('YYYY-MM-DD HH:mm:ss') : '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="Estimated Size">
+            <Descriptions.Item label={t('pitr.estimatedSize')}>
               {preflight.estimatedSize ? `${(preflight.estimatedSize / 1024 / 1024).toFixed(1)} MB` : '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="Checked At">
+            <Descriptions.Item label={t('pitr.checkedAt')}>
               {preflight.checkedAt ? dayjs(preflight.checkedAt).format('YYYY-MM-DD HH:mm:ss') : '-'}
             </Descriptions.Item>
           </Descriptions>
@@ -303,14 +311,14 @@ export default function PITRWizardPage() {
 
   const renderStep3 = () => {
     if (statusQuery.isLoading) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Loading preview..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.loadingPreview')} /></div>;
     }
     if (statusQuery.error) {
       return (
         <Alert
           type="error"
-          message="Failed to load preview"
-          action={<Button size="small" onClick={() => statusQuery.refetch()}>Retry</Button>}
+          message={t('pitr.loadPreviewFailed')}
+          action={<Button size="small" onClick={() => statusQuery.refetch()}>{t('common.retry')}</Button>}
           showIcon
         />
       );
@@ -318,36 +326,36 @@ export default function PITRWizardPage() {
 
     const op = statusQuery.data;
     if (!op) {
-      return <Empty description="No operation data" />;
+      return <Empty description={t('common.noData')} />;
     }
 
     const parseRes = op.parseResult;
     if (!parseRes) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Waiting for parse results..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.loadingPreview')} /></div>;
     }
 
     return (
       <div>
         <Alert
           type="success"
-          message="Binlog parsing completed"
-          description="Review the estimated changes below before executing."
+          message={t('pitr.parseCompleted')}
+          description={t('pitr.parseDesc')}
           showIcon
           style={{ marginBottom: 16 }}
         />
-        <Card size="small" title="Estimated Changes">
+        <Card size="small" title={t('pitr.estimatedChanges')}>
           <Descriptions column={1} size="small">
-            <Descriptions.Item label="Rows Affected">
+            <Descriptions.Item label={t('pitr.rowsAffected')}>
               <Text strong>{parseRes.rowsAffected?.toLocaleString() || '0'}</Text>
             </Descriptions.Item>
-            <Descriptions.Item label="Recovery Time">
+            <Descriptions.Item label={t('pitr.recoveryTime')}>
               {dayjs(op.recoveryTime).format('YYYY-MM-DD HH:mm:ss')}
             </Descriptions.Item>
-            <Descriptions.Item label="Target Table">{op.targetTable}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.targetTable')}>{op.targetTable}</Descriptions.Item>
           </Descriptions>
         </Card>
         {parseRes.sqlSample && (
-          <Card size="small" title="Sample SQL" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('pitr.sampleSql')} style={{ marginTop: 16 }}>
             <pre style={{
               background: '#f5f5f5',
               padding: 12,
@@ -374,10 +382,10 @@ export default function PITRWizardPage() {
           {operation?.execResult && (
             <Card size="small" style={{ maxWidth: 400, margin: '16px auto' }}>
               <Descriptions column={1} size="small">
-                <Descriptions.Item label="Rows Restored">
+                <Descriptions.Item label={t('pitr.rowsRestored')}>
                   <Text strong>{operation.execResult.rowsRestored?.toLocaleString()}</Text>
                 </Descriptions.Item>
-                <Descriptions.Item label="Duration">{operation.execResult.duration || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('pitr.duration')}>{operation.execResult.duration || '-'}</Descriptions.Item>
               </Descriptions>
             </Card>
           )}
@@ -399,15 +407,15 @@ export default function PITRWizardPage() {
 
     // Still executing - show progress
     if (progressQuery.isLoading && !progress) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip="Starting execution..." /></div>;
+      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.startingExecution')} /></div>;
     }
 
     return (
       <div style={{ padding: 24 }}>
         <Alert
           type="info"
-          message="Executing PITR Recovery"
-          description="The recovery is in progress. This may take a few moments."
+          message={t('pitr.executingRecovery')}
+          description={t('pitr.executingDesc')}
           showIcon
           style={{ marginBottom: 24 }}
         />
@@ -423,10 +431,10 @@ export default function PITRWizardPage() {
             style={{ display: 'block', margin: '0 auto 24px' }}
           />
           <Descriptions column={2} size="small" style={{ maxWidth: 400, margin: '0 auto' }}>
-            <Descriptions.Item label="Batches">{progress?.batchesComplete ?? 0} / {progress?.batchesTotal ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="Rows Restored">{progress?.rowsRestored?.toLocaleString() ?? '0'}</Descriptions.Item>
-            <Descriptions.Item label="Est. Remaining">{progress?.estimatedRemaining || 'Calculating...'}</Descriptions.Item>
-            <Descriptions.Item label="Status">{getStateTag(operation?.state || 'executing')}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.batches')}>{progress?.batchesComplete ?? 0} / {progress?.batchesTotal ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.rowsRestored')}>{progress?.rowsRestored?.toLocaleString() ?? '0'}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.estRemaining')}>{progress?.estimatedRemaining || 'Calculating...'}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.status')}>{getStateTag(operation?.state || 'executing')}</Descriptions.Item>
           </Descriptions>
         </Card>
       </div>
@@ -472,7 +480,7 @@ export default function PITRWizardPage() {
                 icon={<ArrowRightOutlined />}
                 onClick={() => {
                   if (!selectedAgentId) {
-                    message.warning('Please select an agent');
+                    message.warning({t('pitr.selectAgent')});
                     return;
                   }
                   setCurrentStep(1);
