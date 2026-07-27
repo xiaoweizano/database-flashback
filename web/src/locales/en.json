@@ -112,6 +112,7 @@
     "execute": "Execute",
     "loadingAgents": "Loading agents...",
     "loadAgentsFailed": "Failed to load agents",
+    "loadAgentsDesc": "Could not fetch the agent list. Please try again.",
     "noAgents": "No agents found",
     "noAgentsDesc": "Register an agent first to start a PITR recovery.",
     "goToAgents": "Go to Agents",

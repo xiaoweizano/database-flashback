@@ -112,6 +112,7 @@
     "execute": "执行恢复",
     "loadingAgents": "加载代理列表...",
     "loadAgentsFailed": "加载代理列表失败",
+    "loadAgentsDesc": "无法获取代理列表，请稍后重试。",
     "noAgents": "暂无代理",
     "noAgentsDesc": "请先注册代理。",
     "goToAgents": "前往代理管理",

@@ -113,7 +113,7 @@ export default function PITRWizardPage() {
   const cancelMutation = useMutation({
     mutationFn: () => cancelPITR(operationId!),
     onSuccess: () => {
-      notification.success({ message: t('pitr.operationCancelled' });
+      notification.success({ message: t('pitr.operationCancelled') });
       navigate('/pitr/new');
     },
     onError: (err: Error) => {
@@ -147,7 +147,7 @@ export default function PITRWizardPage() {
 
   const handleNextFromStep1 = useCallback(() => {
     if (!selectedAgentId || !targetTable || !recoveryTime) {
-      message.warning(t('common.error')});
+      message.warning(t('common.error'));
       return;
     }
     startMutation.mutate();
@@ -480,7 +480,7 @@ export default function PITRWizardPage() {
                 icon={<ArrowRightOutlined />}
                 onClick={() => {
                   if (!selectedAgentId) {
-                    message.warning({t('pitr.selectAgent')});
+                    message.warning(t('pitr.selectAgent'));
                     return;
                   }
                   setCurrentStep(1);
