@@ -19,3 +19,14 @@ export async function approveAgent(id: string): Promise<void> {
 export async function rejectAgent(id: string): Promise<void> {
   await apiClient.post(`/agents/${id}/reject`);
 }
+
+export interface RegisterAgentParams {
+  orgId: string;
+  hostname: string;
+  mySQLVersion?: string;
+}
+
+export async function registerAgent(params: RegisterAgentParams): Promise<{ agent: AgentInfo; registrationToken: string }> {
+  const response = await apiClient.post('/agents/register', params);
+  return response.data;
+}

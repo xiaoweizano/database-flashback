@@ -76,7 +76,10 @@
     "noOrg": "未找到组织",
     "noOrgDesc": "请先创建组织以管理代理。",
     "goToOrg": "前往组织",
-    "approved": "已批准"
+    "approved": "已批准",
+    "registerAgent": "注册代理",
+    "registerSuccess": "代理注册成功",
+    "registerNoToken": "点击下方按钮注册新代理。"
   },
   "pitr": {
     "title": "PITR 恢复",

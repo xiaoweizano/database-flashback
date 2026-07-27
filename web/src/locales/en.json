@@ -76,7 +76,10 @@
     "noOrg": "No organization found",
     "noOrgDesc": "Create an organization first to manage agents.",
     "goToOrg": "Go to Organization",
-    "approved": "Approved"
+    "approved": "Approved",
+    "registerAgent": "Register Agent",
+    "registerSuccess": "Agent registered successfully",
+    "registerNoToken": "Click the button below to register a new agent."
   },
   "pitr": {
     "title": "PITR Recovery",
