@@ -58,8 +58,8 @@ export default function PITRWizardPage() {
     enabled: !!orgId,
   });
 
-  const onlineAgents = useMemo(
-    () => (agentsQuery.data ?? []).filter((a: AgentInfo) => a.status === 'online'),
+  const availableAgents = useMemo(
+    () => agentsQuery.data ?? [],
     [agentsQuery.data],
   );
 
@@ -172,10 +172,10 @@ export default function PITRWizardPage() {
         />
       );
     }
-    if (onlineAgents.length === 0) {
+    if (availableAgents.length === 0) {
       return (
-        <Empty description="No online agents found">
-          <Text type="secondary">You need at least one online agent to start a PITR recovery.</Text>
+        <Empty description="No agents found">
+          <Text type="secondary">Register an agent first to start a PITR recovery.</Text>
           <br /><br />
           <Button type="primary" onClick={() => navigate('/agents')}>Go to Agents</Button>
         </Empty>
@@ -186,18 +186,18 @@ export default function PITRWizardPage() {
       <Form layout="vertical">
         <Form.Item label="Select Agent" required>
           <Select
-            placeholder="Choose an online agent"
+            placeholder="Choose an agent"
             style={{ width: '100%' }}
             value={selectedAgentId}
             onChange={(value) => {
-              const agent = onlineAgents.find((a: AgentInfo) => a.id === value);
+              const agent = availableAgents.find((a: AgentInfo) => a.id === value);
               if (agent) {
                 setSelectedAgentId(agent.id);
                 setSelectedAgentHostname(agent.hostname);
               }
             }}
           >
-            {onlineAgents.map((agent: AgentInfo) => (
+            {availableAgents.map((agent: AgentInfo) => (
               <Option key={agent.id} value={agent.id}>
                 {agent.hostname} - MySQL {agent.mySQLVersion || 'N/A'}
               </Option>
@@ -209,10 +209,12 @@ export default function PITRWizardPage() {
             <Descriptions column={1} size="small">
               <Descriptions.Item label="Hostname">{selectedAgentHostname}</Descriptions.Item>
               <Descriptions.Item label="Status">
-                <Tag color="green">online</Tag>
+                <Tag color={availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.status === 'online' ? 'green' : 'default'}>
+                  {availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.status || '-'}
+                </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="MySQL Version">
-                {onlineAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.mySQLVersion || '-'}
+                {availableAgents.find((a: AgentInfo) => a.id === selectedAgentId)?.mySQLVersion || '-'}
               </Descriptions.Item>
             </Descriptions>
           </Card>
