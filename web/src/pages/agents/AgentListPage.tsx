@@ -264,7 +264,6 @@ export default function AgentListPage() {
               </Button>
             </div>
           </div>
-          </div>
         ) : (
           <Form form={form} layout="vertical">
             <Form.Item
