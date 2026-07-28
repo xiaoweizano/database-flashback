@@ -68,7 +68,7 @@ export default function PITRDetailPage() {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/audit')}>
-          Back to Audit
+          {t('audit.backToAudit')}
         </Button>
       </Space>
 
@@ -95,7 +95,7 @@ export default function PITRDetailPage() {
           <Descriptions.Item label={t('pitr.createdAt')}>
             {dayjs(operation.createdAt).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
-          <Descriptions.Item label="更新时间">
+          <Descriptions.Item label={t('pitr.updatedAt')}>
             {dayjs(operation.updatedAt).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
         </Descriptions>
@@ -138,7 +138,7 @@ export default function PITRDetailPage() {
                   pagination={false}
                   columns={[
                     {
-                      title: '#',
+                      title: t('audit.operationId'),
                       dataIndex: 'sequence',
                       key: 'sequence',
                       width: 40,

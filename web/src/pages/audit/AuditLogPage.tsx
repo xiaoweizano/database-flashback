@@ -102,7 +102,7 @@ export default function AuditLogPage() {
   // Table columns
   const columns: ColumnsType<AuditEntry> = [
     {
-      title: 'Operation ID',
+      title: t('audit.operationId'),
       dataIndex: 'operationId',
       key: 'operationId',
       width: 120,
@@ -112,13 +112,13 @@ export default function AuditLogPage() {
       ),
     },
     {
-      title: 'Operator',
+      title: t('audit.operator'),
       dataIndex: 'operator',
       key: 'operator',
       width: 160,
     },
     {
-      title: 'Timestamp',
+      title: t('audit.timestamp'),
       dataIndex: 'timestamp',
       key: 'timestamp',
       width: 180,
@@ -128,20 +128,20 @@ export default function AuditLogPage() {
         dayjs(a.timestamp).unix() - dayjs(b.timestamp).unix(),
     },
     {
-      title: 'Target Table',
+      title: t('audit.targetTable'),
       dataIndex: 'targetTable',
       key: 'targetTable',
       width: 180,
     },
     {
-      title: 'Rows Affected',
+      title: t('audit.rowsAffected'),
       dataIndex: 'rowsAffected',
       key: 'rowsAffected',
       width: 120,
       render: (val: number) => val?.toLocaleString() || '0',
     },
     {
-      title: 'Status',
+      title: t('audit.status'),
       dataIndex: 'status',
       key: 'status',
       width: 120,
@@ -180,7 +180,7 @@ export default function AuditLogPage() {
         <Title level={3} style={{ margin: 0 }}>{t('audit.title')}</Title>
         <Space>
           <Button icon={<DownloadOutlined />} onClick={handleExport}>
-            Export CSV
+            {t('audit.export')}
           </Button>
         </Space>
       </div>
@@ -227,7 +227,7 @@ export default function AuditLogPage() {
             </Select>
           </div>
           <Button icon={<ReloadOutlined />} onClick={() => auditQuery.refetch()}>
-            Refresh
+            {t('audit.refresh')}
           </Button>
           {(dateRange || statusFilter || agentFilter) && (
             <Button onClick={clearFilters}>{t('audit.clearFilters')}</Button>
@@ -262,7 +262,7 @@ export default function AuditLogPage() {
                 <Button onClick={clearFilters}>{t('audit.clearFilters')}</Button>
               )}
               <Button type="primary" onClick={() => navigate('/pitr/new')}>
-                Start New Recovery
+                {t('audit.startNewRecovery')}
               </Button>
             </Space>
           </Empty>

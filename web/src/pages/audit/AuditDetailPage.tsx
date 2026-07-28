@@ -54,7 +54,7 @@ export default function AuditDetailPage() {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/audit')}>
-          Back
+          {t('audit.back')}
         </Button>
       </Space>
 

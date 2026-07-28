@@ -58,7 +58,12 @@
     "created": "Organization created",
     "createFailed": "Failed to create organization",
     "invited": "Member invited",
-    "inviteFailed": "Failed to invite member"
+    "inviteFailed": "Failed to invite member",
+    "member": "Member",
+    "admin": "Admin",
+    "settingsTitle": "Organization Settings",
+    "generalSettings": "General Settings",
+    "settingsDesc": "Organization settings will be available here. Admin access is required to modify settings."
   },
   "agents": {
     "title": "Agents",
@@ -89,7 +94,17 @@
     "viewDetail": "View Details",
     "delete": "Delete",
     "detail": "Agent Details",
-    "hostnameRequired": "Please enter the hostname"
+    "hostnameRequired": "Please enter the hostname",
+    "hostnamePlaceholder": "e.g. db-server-01",
+    "mysqlVersionPlaceholder": "e.g. 8.0.32",
+    "id": "ID",
+    "back": "Back",
+    "backToList": "Back to Agents",
+    "approve": "Approve Agent",
+    "approveSuccess": "Agent approved",
+    "approveFailed": "Failed to approve agent",
+    "rejectConfirmDetail": "Are you sure you want to reject this agent?",
+    "loadDetailFailed": "Failed to load agent details"
   },
   "pitr": {
     "title": "PITR Recovery",
@@ -151,7 +166,15 @@
     "viewAuditLog": "View Audit Log",
     "mysqlDsn": "MySQL DSN",
     "mysqlDsnHelp": "Format: user:password@tcp(host:port)/database",
-    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database"
+    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database",
+    "targetTablePlaceholder": "e.g. mydb.orders",
+    "calculating": "Calculating...",
+    "updatedAt": "Updated At",
+    "loadFailed": "Failed to load PITR operations",
+    "noOperations": "No PITR operations yet",
+    "noOperationsFiltered": "No PITR operations found in this time range",
+    "operationId": "Operation ID",
+    "agentId": "Agent ID"
   },
   "audit": {
     "title": "Audit Log",
@@ -194,6 +217,7 @@
   "common": {
     "loading": "Loading...",
     "error": "Error",
+    "success": "Success",
     "retry": "Retry",
     "cancel": "Cancel",
     "confirm": "Confirm",

@@ -58,7 +58,12 @@
     "created": "组织创建成功",
     "createFailed": "创建组织失败",
     "invited": "成员邀请成功",
-    "inviteFailed": "邀请成员失败"
+    "inviteFailed": "邀请成员失败",
+    "member": "成员",
+    "admin": "管理员",
+    "settingsTitle": "组织设置",
+    "generalSettings": "通用设置",
+    "settingsDesc": "组织设置将在此处提供。需要管理员权限才能修改。"
   },
   "agents": {
     "title": "代理",
@@ -89,7 +94,17 @@
     "viewDetail": "查看详情",
     "delete": "删除",
     "detail": "代理详情",
-    "hostnameRequired": "请输入主机名"
+    "hostnameRequired": "请输入主机名",
+    "hostnamePlaceholder": "例如 db-server-01",
+    "mysqlVersionPlaceholder": "例如 8.0.32",
+    "id": "ID",
+    "back": "返回",
+    "backToList": "返回代理列表",
+    "approve": "批准代理",
+    "approveSuccess": "代理已批准",
+    "approveFailed": "批准代理失败",
+    "rejectConfirmDetail": "确定要拒绝该代理吗？",
+    "loadDetailFailed": "加载代理详情失败"
   },
   "pitr": {
     "title": "PITR 恢复",
@@ -151,7 +166,15 @@
     "viewAuditLog": "查看审计日志",
     "mysqlDsn": "MySQL 连接串",
     "mysqlDsnHelp": "格式：user:password@tcp(host:port)/database",
-    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database"
+    "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database",
+    "targetTablePlaceholder": "例如 mydb.orders",
+    "calculating": "计算中...",
+    "updatedAt": "更新时间",
+    "loadFailed": "加载 PITR 操作失败",
+    "noOperations": "暂无 PITR 恢复操作",
+    "noOperationsFiltered": "该时间范围内暂无 PITR 恢复操作",
+    "operationId": "操作 ID",
+    "agentId": "代理 ID"
   },
   "audit": {
     "title": "审计日志",
@@ -194,6 +217,7 @@
   "common": {
     "loading": "加载中...",
     "error": "出错了",
+    "success": "操作成功",
     "retry": "重试",
     "cancel": "取消",
     "confirm": "确认",

@@ -20,7 +20,7 @@ export default function OrgPage() {
 
   const memberColumns = [
     {
-      title: 'Email',
+      title: t('auth.email'),
       dataIndex: 'email',
       key: 'email',
     },
@@ -189,18 +189,18 @@ export default function OrgPage() {
         <Form form={inviteForm} onFinish={handleInviteMember} layout="vertical">
           <Form.Item
             name="email"
-            label="Email"
+            label={t('auth.email')}
             rules={[
               { required: true, message: t('auth.validation.emailRequired') },
               { type: 'email', message: t('auth.validation.emailInvalid') },
             ]}
           >
-            <Input placeholder="user@example.com" />
+            <Input placeholder={t('auth.placeholder.email')} />
           </Form.Item>
           <Form.Item name="role" label={t('org.role')} initialValue="member">
             <Select>
-              <Select.Option value="member">Member</Select.Option>
-              <Select.Option value="admin">Admin</Select.Option>
+              <Select.Option value="member">{t('org.member')}</Select.Option>
+              <Select.Option value="admin">{t('org.admin')}</Select.Option>
             </Select>
           </Form.Item>
         </Form>

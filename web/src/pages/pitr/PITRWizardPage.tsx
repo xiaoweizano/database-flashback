@@ -236,7 +236,7 @@ export default function PITRWizardPage() {
     <Form layout="vertical">
       <Form.Item label={t('pitr.targetTable')} required help={t('pitr.targetTableHelp')}>
         <Input
-          placeholder="e.g. mydb.orders"
+          placeholder={t('pitr.targetTablePlaceholder')}
           value={targetTable}
           onChange={(e) => setTargetTable(e.target.value)}
         />
@@ -386,7 +386,7 @@ export default function PITRWizardPage() {
       return (
         <div style={{ textAlign: 'center', padding: 24 }}>
           <CheckCircleOutlined style={{ fontSize: 64, color: '#52c41a' }} />
-          <Title level={4} style={{ marginTop: 16 }}>PITR Recovery Completed</Title>
+          <Title level={4} style={{ marginTop: 16 }}>{t('pitr.recoveryCompleted')}</Title>
           {operation?.execResult && (
             <Card size="small" style={{ maxWidth: 400, margin: '16px auto' }}>
               <Descriptions column={1} size="small">
@@ -405,7 +405,11 @@ export default function PITRWizardPage() {
       return (
         <div style={{ textAlign: 'center', padding: 24 }}>
           <CloseCircleOutlined style={{ fontSize: 64, color: '#ff4d4f' }} />
-          <Title level={4} style={{ marginTop: 16 }}>Operation {operation?.state === 'cancelled' ? 'Cancelled' : 'Failed'}</Title>
+          <Title level={4} style={{ marginTop: 16 }}>{
+            operation?.state === 'cancelled'
+              ? t('pitr.operationCancelled')
+              : t('pitr.operationFailed')
+          }</Title>
           {operation?.error && (
             <Alert type="error" message={operation.error} showIcon style={{ maxWidth: 400, margin: '16px auto' }} />
           )}
@@ -429,7 +433,7 @@ export default function PITRWizardPage() {
         />
         <Card>
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <Text type="secondary">Batch Progress</Text>
+            <Text type="secondary">{t('pitr.batchProgress')}</Text>
           </div>
           <Progress
             type="circle"
@@ -441,7 +445,7 @@ export default function PITRWizardPage() {
           <Descriptions column={2} size="small" style={{ maxWidth: 400, margin: '0 auto' }}>
             <Descriptions.Item label={t('pitr.batches')}>{progress?.batchesComplete ?? 0} / {progress?.batchesTotal ?? '-'}</Descriptions.Item>
             <Descriptions.Item label={t('pitr.rowsRestored')}>{progress?.rowsRestored?.toLocaleString() ?? '0'}</Descriptions.Item>
-            <Descriptions.Item label={t('pitr.estRemaining')}>{progress?.estimatedRemaining || 'Calculating...'}</Descriptions.Item>
+            <Descriptions.Item label={t('pitr.estRemaining')}>{progress?.estimatedRemaining || t('pitr.calculating')}</Descriptions.Item>
             <Descriptions.Item label={t('pitr.status')}>{getStateTag(operation?.state || 'executing')}</Descriptions.Item>
           </Descriptions>
         </Card>
@@ -456,7 +460,7 @@ export default function PITRWizardPage() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>Point-in-Time Recovery</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('pitr.title')}</Title>
       </div>
 
       <Card>
@@ -474,13 +478,13 @@ export default function PITRWizardPage() {
           <Space>
             {currentStep > 0 && (
               <Button icon={<ArrowLeftOutlined />} onClick={handleBack} disabled={startMutation.isPending || cancelMutation.isPending}>
-                Back
+                {t('pitr.stepBack')}
               </Button>
             )}
           </Space>
           <Space>
             <Button icon={<CloseCircleOutlined />} onClick={handleCancel} disabled={cancelMutation.isPending}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             {currentStep === 0 && (
               <Button
@@ -494,7 +498,7 @@ export default function PITRWizardPage() {
                   setCurrentStep(1);
                 }}
               >
-                Next
+                {t('pitr.stepNext')}
               </Button>
             )}
             {currentStep === 1 && (
@@ -504,7 +508,7 @@ export default function PITRWizardPage() {
                 icon={<ArrowRightOutlined />}
                 onClick={handleNextFromStep1}
               >
-                Start Recovery
+                {t('pitr.startRecovery')}
               </Button>
             )}
             {currentStep === 2 && (
@@ -513,7 +517,7 @@ export default function PITRWizardPage() {
                 icon={<ArrowRightOutlined />}
                 onClick={() => setCurrentStep(3)}
               >
-                Continue to Preview
+                {t('pitr.continuePreview')}
               </Button>
             )}
             {currentStep === 3 && (
@@ -522,12 +526,12 @@ export default function PITRWizardPage() {
                 icon={<ArrowRightOutlined />}
                 onClick={() => setCurrentStep(4)}
               >
-                Execute Recovery
+                {t('pitr.executeRecovery')}
               </Button>
             )}
             {(isCompleted || isFailed) && (
               <Button type="primary" onClick={() => navigate('/audit')}>
-                View Audit Log
+                {t('pitr.viewAuditLog')}
               </Button>
             )}
           </Space>

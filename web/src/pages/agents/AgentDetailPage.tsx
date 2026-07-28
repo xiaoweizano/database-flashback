@@ -4,6 +4,7 @@ import { Card, Descriptions, Badge, Button, Spin, Typography, message, Space, Mo
 import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getAgent, approveAgent, rejectAgent } from '../../api/agents';
+import { useLocale } from '../../hooks/useLocale';
 
 const { Title } = Typography;
 
@@ -17,6 +18,7 @@ export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useLocale();
 
   const { data: agent, isLoading, error } = useQuery({
     queryKey: ['agent', id],
@@ -27,32 +29,32 @@ export default function AgentDetailPage() {
   const approveMutation = useMutation({
     mutationFn: () => approveAgent(id!),
     onSuccess: () => {
-      message.success('Agent approved');
+      message.success(t('agents.approveSuccess'));
       queryClient.invalidateQueries({ queryKey: ['agent', id] });
     },
     onError: () => {
-      message.error('Failed to approve agent');
+      message.error(t('agents.approveFailed'));
     },
   });
 
   const rejectMutation = useMutation({
     mutationFn: () => rejectAgent(id!),
     onSuccess: () => {
-      message.success('Agent rejected');
+      message.success(t('agents.rejected'));
       navigate('/agents');
     },
     onError: () => {
-      message.error('Failed to reject agent');
+      message.error(t('agents.rejectFailed'));
     },
   });
 
   const showRejectConfirm = () => {
     Modal.confirm({
-      title: 'Reject Agent',
-      content: 'Are you sure you want to reject this agent?',
-      okText: 'Confirm',
+      title: t('agents.rejectTitle'),
+      content: t('agents.rejectConfirmDetail'),
+      okText: t('common.confirm'),
       okType: 'danger',
-      cancelText: 'Cancel',
+      cancelText: t('common.cancel'),
       onOk: () => rejectMutation.mutate(),
     });
   };
@@ -65,9 +67,9 @@ export default function AgentDetailPage() {
     return (
       <Card>
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <Typography.Text type="danger">Failed to load agent details.</Typography.Text>
+          <Typography.Text type="danger">{t('agents.loadDetailFailed')}</Typography.Text>
           <br /><br />
-          <Button onClick={() => navigate('/agents')}>Back to Agents</Button>
+          <Button onClick={() => navigate('/agents')}>{t('agents.backToList')}</Button>
         </div>
       </Card>
     );
@@ -77,7 +79,7 @@ export default function AgentDetailPage() {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/agents')}>
-          Back
+          {t('agents.back')}
         </Button>
       </Space>
 
@@ -94,7 +96,7 @@ export default function AgentDetailPage() {
               onClick={() => approveMutation.mutate()}
               loading={approveMutation.isPending}
             >
-              Approve Agent
+              {t('agents.approve')}
             </Button>
             {!agent.approved && (
               <Button
@@ -103,25 +105,25 @@ export default function AgentDetailPage() {
                 onClick={showRejectConfirm}
                 loading={rejectMutation.isPending}
               >
-                Reject Agent
+                {t('agents.rejectTitle')}
               </Button>
             )}
           </Space>
         </div>
 
         <Descriptions bordered column={1}>
-          <Descriptions.Item label="ID">{agent.id}</Descriptions.Item>
-          <Descriptions.Item label="Hostname">{agent.hostname}</Descriptions.Item>
-          <Descriptions.Item label="MySQL Version">
+          <Descriptions.Item label={t('agents.id')}>{agent.id}</Descriptions.Item>
+          <Descriptions.Item label={t('agents.hostname')}>{agent.hostname}</Descriptions.Item>
+          <Descriptions.Item label={t('agents.mysqlVersion')}>
             {agent.mySQLVersion || '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="Status">
+          <Descriptions.Item label={t('agents.status')}>
             <Badge status={statusBadge[agent.status]} text={agent.status} />
           </Descriptions.Item>
-          <Descriptions.Item label="Last Seen">
+          <Descriptions.Item label={t('agents.lastSeen')}>
             {agent.lastSeen ? dayjs(agent.lastSeen).format('YYYY-MM-DD HH:mm:ss') : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="Created At">
+          <Descriptions.Item label={t('agents.created')}>
             {dayjs(agent.createdAt).format('YYYY-MM-DD HH:mm:ss')}
           </Descriptions.Item>
         </Descriptions>

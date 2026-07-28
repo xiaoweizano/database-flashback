@@ -44,6 +44,8 @@ services:
     environment:
       DATABASE_URL: "root:pitr_test@tcp(mysql:3306)/pitr_server"
       LISTEN_ADDR: ":8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mysql:
         condition: service_healthy

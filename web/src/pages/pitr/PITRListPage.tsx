@@ -11,6 +11,7 @@ import { listOrgs } from '../../api/org';
 import { listPITROperations } from '../../api/pitr';
 import type { PITROperation } from '../../types';
 import type { ColumnsType } from 'antd/es/table';
+import { useLocale } from '../../hooks/useLocale';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -28,6 +29,7 @@ const stateColors: Record<string, string> = {
 
 export default function PITRListPage() {
   const navigate = useNavigate();
+  const { t } = useLocale();
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
 
   const orgsQuery = useQuery({
@@ -57,7 +59,7 @@ export default function PITRListPage() {
 
   const columns: ColumnsType<PITROperation> = [
     {
-      title: 'Operation ID',
+      title: t('pitr.operationId'),
       dataIndex: 'id',
       key: 'id',
       width: 120,
@@ -67,7 +69,7 @@ export default function PITRListPage() {
       ),
     },
     {
-      title: 'Agent ID',
+      title: t('pitr.agentId'),
       dataIndex: 'agentId',
       key: 'agentId',
       width: 120,
@@ -77,20 +79,20 @@ export default function PITRListPage() {
       ),
     },
     {
-      title: 'Target Table',
+      title: t('pitr.targetTable'),
       dataIndex: 'targetTable',
       key: 'targetTable',
       width: 160,
     },
     {
-      title: 'Recovery Time',
+      title: t('pitr.recoveryTime'),
       dataIndex: 'recoveryTime',
       key: 'recoveryTime',
       width: 180,
       render: (ts: string) => ts ? dayjs(ts).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
-      title: 'State',
+      title: t('pitr.state'),
       dataIndex: 'state',
       key: 'state',
       width: 120,
@@ -99,7 +101,7 @@ export default function PITRListPage() {
       ),
     },
     {
-      title: 'Created',
+      title: t('pitr.createdAt'),
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: 180,
@@ -117,13 +119,13 @@ export default function PITRListPage() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>PITR Operations</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('pitr.title')}</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => pitrQuery.refetch()}>
-            Refresh
+            {t('audit.refresh')}
           </Button>
           <Button type="primary" icon={<HistoryOutlined />} onClick={() => navigate('/pitr/new')}>
-            New Recovery
+            {t('pitr.newRecovery')}
           </Button>
         </Space>
       </div>
@@ -131,14 +133,14 @@ export default function PITRListPage() {
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <div>
-            <Text strong style={{ marginRight: 8 }}>Date Range</Text>
+            <Text strong style={{ marginRight: 8 }}>{t('audit.dateRange')}</Text>
             <RangePicker
               onChange={handleDateChange}
               value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
             />
           </div>
           {dateRange && (
-            <Button onClick={() => setDateRange(null)}>Clear Filters</Button>
+            <Button onClick={() => setDateRange(null)}>{t('audit.clearFilters')}</Button>
           )}
         </Space>
       </Card>
@@ -150,9 +152,9 @@ export default function PITRListPage() {
       ) : pitrQuery.error ? (
         <Card>
           <div style={{ textAlign: 'center', padding: 48 }}>
-            <Text type="danger">Failed to load PITR operations.</Text>
+            <Text type="danger">{t('pitr.loadFailed')}</Text>
             <br /><br />
-            <Button onClick={() => pitrQuery.refetch()}>Retry</Button>
+            <Button onClick={() => pitrQuery.refetch()}>{t('common.retry')}</Button>
           </div>
         </Card>
       ) : (pitrQuery.data ?? []).length === 0 ? (
@@ -160,12 +162,12 @@ export default function PITRListPage() {
           <Empty
             description={
               dateRange
-                ? 'No PITR operations found in this time range.'
-                : 'No PITR operations yet.'
+                ? t('pitr.noOperationsFiltered')
+                : t('pitr.noOperations')
             }
           >
             <Button type="primary" onClick={() => navigate('/pitr/new')}>
-              Start New Recovery
+              {t('audit.startNewRecovery')}
             </Button>
           </Empty>
         </Card>

@@ -271,13 +271,13 @@ export default function AgentListPage() {
               label={t('agents.hostname')}
               rules={[{ required: true, message: t('agents.hostnameRequired') }]}
             >
-              <Input placeholder="e.g. db-server-01" />
+              <Input placeholder={t('agents.hostnamePlaceholder')} />
             </Form.Item>
             <Form.Item
               name="mySQLVersion"
               label={t('agents.mysqlVersion')}
             >
-              <Input placeholder="e.g. 8.0.32" />
+              <Input placeholder={t('agents.mysqlVersionPlaceholder')} />
             </Form.Item>
             <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
               <Space>
@@ -305,7 +305,7 @@ export default function AgentListPage() {
       >
         {detailAgent && (
           <Descriptions bordered column={1} size="small">
-            <Descriptions.Item label="ID">{detailAgent.id}</Descriptions.Item>
+            <Descriptions.Item label={t('agents.id')}>{detailAgent.id}</Descriptions.Item>
             <Descriptions.Item label={t('agents.hostname')}>{detailAgent.hostname}</Descriptions.Item>
             <Descriptions.Item label={t('agents.mysqlVersion')}>
               {detailAgent.mySQLVersion || '-'}
