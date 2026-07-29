@@ -182,17 +182,12 @@ func ParseDSNToConnConfig(dsn string) (connector.ConnConfig, error) {
 		params["tls"] = cfg.TLSConfig
 	}
 
-	// Extract custom mysqlbinlog_path param before passing to the connector.
-	mysqlbinlogPath := params["mysqlbinlog_path"]
-	delete(params, "mysqlbinlog_path")
-
 	return connector.ConnConfig{
-		Host:            host,
-		Port:            port,
-		User:            cfg.User,
-		Password:        cfg.Passwd,
-		Database:        cfg.DBName,
-		Params:          params,
-		MySQLBinlogPath: mysqlbinlogPath,
+		Host:     host,
+		Port:     port,
+		User:     cfg.User,
+		Password: cfg.Passwd,
+		Database: cfg.DBName,
+		Params:   params,
 	}, nil
 }

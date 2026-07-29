@@ -11,10 +11,6 @@ type ConnConfig struct {
 	Database string
 	// Params holds additional DSN parameters (e.g., TLS config, timeouts).
 	Params map[string]string
-	// MySQLBinlogPath is an optional explicit path to the mysqlbinlog binary.
-	// If empty, the system auto-discovers it from PATH, MySQL basedir, and
-	// common installation paths.
-	MySQLBinlogPath string
 }
 
 // DSN returns the MySQL Data Source Name string derived from the config.

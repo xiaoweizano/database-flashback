@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -188,8 +187,6 @@ func (m *MySQLConnector) GetBinlogDir(ctx context.Context) (string, error) {
 // GetBasedir
 // ---------------------------------------------------------------------------
 
-// GetBasedir returns the MySQL installation base directory by querying
-// SHOW VARIABLES LIKE 'basedir'.
 func (m *MySQLConnector) GetBasedir(ctx context.Context) (string, error) {
 	if m.db == nil {
 		return "", fmt.Errorf("connector: not connected")
@@ -203,113 +200,6 @@ func (m *MySQLConnector) GetBasedir(ctx context.Context) (string, error) {
 	}
 	return basedir, nil
 }
-
-// ---------------------------------------------------------------------------
-// DownloadBinlogFiles
-// ---------------------------------------------------------------------------
-
-// DownloadBinlogFiles reads binlog files from the MySQL server via LOAD_FILE()
-// and writes them to a local temporary directory. Returns the local file paths.
-// This is used as a fallback when mysqlbinlog is not available and binlog files
-// are not accessible on the local filesystem.
-//
-// Conditions for success:
-//   - The MySQL user must have the FILE privilege.
-//   - The MySQL server variable secure_file_priv must be empty ("") or include
-//     the binlog directory so LOAD_FILE() can read the files.
-//   - Binlog files must be world-readable on the MySQL server.
-func (m *MySQLConnector) DownloadBinlogFiles(ctx context.Context, binlogDir string, binlogNames []string) ([]string, error) {
-	if m.db == nil {
-		return nil, fmt.Errorf("connector: not connected")
-	}
-	if len(binlogNames) == 0 {
-		return nil, fmt.Errorf("connector: no binlog files specified")
-	}
-
-	// Check secure_file_priv.
-	var sfpName, secureFilePriv string
-	if err := m.db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'secure_file_priv'").Scan(&sfpName, &secureFilePriv); err != nil {
-		return nil, fmt.Errorf("connector: query secure_file_priv: %w", err)
-	}
-	if secureFilePriv != "" && !strings.HasPrefix(binlogDir, secureFilePriv) {
-		return nil, fmt.Errorf(
-			"MySQL secure_file_priv (%s) restricts LOAD_FILE() to that directory; "+
-				"binlog files are in %s. To fix, either: (1) add --secure-file-priv= \"\" "+
-				"to the MySQL startup command, or (2) install mysql-client and specify "+
-				"mysqlbinlog_path in the DSN (e.g. ?mysqlbinlog_path=C:\\mysql\\bin\\mysqlbinlog.exe)",
-			secureFilePriv, binlogDir)
-	}
-
-	tmpDir, err := os.MkdirTemp("", "pitr-binlog-*")
-	if err != nil {
-		return nil, fmt.Errorf("connector: create temp dir: %w", err)
-	}
-
-	var localPaths []string
-	for _, name := range binlogNames {
-		fullPath := filepath.Join(binlogDir, name)
-
-		// Load the file into a session variable. This avoids re-reading the file
-		// from disk for each chunk.
-		_, err := m.db.ExecContext(ctx, "SET @_pitr_binlog = LOAD_FILE(?)", fullPath)
-		if err != nil {
-			// Cleanup on failure.
-			os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("connector: LOAD_FILE(%s) failed: %w (check FILE privilege)", fullPath, err)
-		}
-
-		// Check whether LOAD_FILE returned NULL (file not found, no privilege, or
-		// secure_file_priv restriction).
-		var isNull bool
-		if err := m.db.QueryRowContext(ctx, "SELECT @_pitr_binlog IS NULL").Scan(&isNull); err != nil {
-			os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("connector: verify LOAD_FILE(%s): %w", fullPath, err)
-		}
-		if isNull {
-			os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf(
-				"connector: LOAD_FILE(%s) returned NULL; the file may not exist, "+
-					"is not world-readable, or the MySQL user lacks the FILE privilege", fullPath)
-		}
-
-		// Get file size.
-		var size int64
-		if err := m.db.QueryRowContext(ctx, "SELECT LENGTH(@_pitr_binlog)").Scan(&size); err != nil {
-			os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("connector: get size of %s: %w", fullPath, err)
-		}
-
-		// Read chunks and write to local file.
-		localPath := filepath.Join(tmpDir, name)
-		f, err := os.Create(localPath)
-		if err != nil {
-			os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("connector: create local file %s: %w", localPath, err)
-		}
-
-		const chunkSize = 64 * 1024 * 1024 // 64 MB per chunk
-		for pos := int64(1); pos <= size; pos += chunkSize {
-			var chunk []byte
-			err := m.db.QueryRowContext(ctx, "SELECT SUBSTRING(@_pitr_binlog, ?, ?)", pos, chunkSize).Scan(&chunk)
-			if err != nil {
-				f.Close()
-				os.RemoveAll(tmpDir)
-				return nil, fmt.Errorf("connector: read chunk at pos %d of %s: %w", pos, fullPath, err)
-			}
-			if _, err := f.Write(chunk); err != nil {
-				f.Close()
-				os.RemoveAll(tmpDir)
-				return nil, fmt.Errorf("connector: write chunk of %s: %w", localPath, err)
-			}
-		}
-		f.Close()
-
-		localPaths = append(localPaths, localPath)
-	}
-
-	return localPaths, nil
-}
-
 // ---------------------------------------------------------------------------
 // ParseBinlog verifies that the requested binlog files exist and returns any
 // parse errors. Actual event-level parsing is delegated to the parser package
