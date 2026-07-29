@@ -51,6 +51,7 @@ export default function PITRWizardPage() {
   const [targetTable, setTargetTable] = useState('');
   const [recoveryTime, setRecoveryTime] = useState('');
   const [mysqlDsn, setMysqlDsn] = useState('');
+  const [mysqlBinlogPath, setMysqlBinlogPath] = useState('');
   const [operationId, setOperationId] = useState<string | null>(null);
 
   // Fetch agents list
@@ -99,6 +100,7 @@ export default function PITRWizardPage() {
       recovery_time: dayjs(recoveryTime).toISOString(),
       mode: 'execute',
       mysql_dsn: mysqlDsn,
+      mysqlbinlog_path: mysqlBinlogPath || undefined,
     }),
     onSuccess: (data) => {
       setOperationId(data.operationId);
@@ -254,6 +256,13 @@ export default function PITRWizardPage() {
           placeholder={t('pitr.mysqlDsnPlaceholder')}
           value={mysqlDsn}
           onChange={(e) => setMysqlDsn(e.target.value)}
+        />
+      </Form.Item>
+      <Form.Item label={t('pitr.mysqlbinlogPath')} help={t('pitr.mysqlbinlogPathHelp')}>
+        <Input
+          placeholder={t('pitr.mysqlbinlogPathPlaceholder')}
+          value={mysqlBinlogPath}
+          onChange={(e) => setMysqlBinlogPath(e.target.value)}
         />
       </Form.Item>
     </Form>

@@ -55,11 +55,12 @@ func NewHandler(
 // ---------- request / response types ----------
 
 type startRequest struct {
-	AgentID      string `json:"agent_id"`
-	TargetTable  string `json:"target_table"`
-	RecoveryTime string `json:"recovery_time"`
-	Mode         string `json:"mode"` // "preview" or "execute"
-	MySQLDSN     string `json:"mysql_dsn"`
+	AgentID         string `json:"agent_id"`
+	TargetTable     string `json:"target_table"`
+	RecoveryTime    string `json:"recovery_time"`
+	Mode            string `json:"mode"` // "preview" or "execute"
+	MySQLDSN        string `json:"mysql_dsn"`
+	MySQLBinlogPath string `json:"mysqlbinlog_path,omitempty"`
 }
 
 type startResponse struct {
@@ -252,13 +253,14 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	op := &Operation{
-		OrgID:        agt.OrgID,
-		AgentID:      req.AgentID,
-		TargetTable:  req.TargetTable,
-		RecoveryTime: recoveryTime,
-		Mode:         req.Mode,
-		DSN:          req.MySQLDSN,
-		State:        StatePreflight,
+		OrgID:           agt.OrgID,
+		AgentID:         req.AgentID,
+		TargetTable:     req.TargetTable,
+		RecoveryTime:    recoveryTime,
+		Mode:            req.Mode,
+		DSN:             req.MySQLDSN,
+		MySQLBinlogPath: req.MySQLBinlogPath,
+		State:           StatePreflight,
 	}
 
 	if err := h.opStore.Create(op); err != nil {
@@ -497,9 +499,19 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// findMySQLBinlog locates the mysqlbinlog binary by checking PATH first, then
-// querying MySQL's basedir, and finally checking common installation paths.
-func findMySQLBinlog(ctx context.Context, conn *connector.MySQLConnector) (string, error) {
+// findMySQLBinlog locates the mysqlbinlog binary. If mysqlbinlogPath is
+// non-empty it is validated and returned directly. Otherwise the function
+// checks PATH, MySQL basedir, and common installation paths.
+func findMySQLBinlog(mysqlbinlogPath string, ctx context.Context, conn *connector.MySQLConnector) (string, error) {
+	// 0. Explicit path from user config — use it directly.
+	if mysqlbinlogPath != "" {
+		if fi, err := os.Stat(mysqlbinlogPath); err == nil && fi.Mode().IsRegular() {
+			abs, _ := filepath.Abs(mysqlbinlogPath)
+			return abs, nil
+		}
+		return "", fmt.Errorf("specified mysqlbinlog path %q does not exist", mysqlbinlogPath)
+	}
+
 	// 1. Try PATH first.
 	if path, err := exec.LookPath("mysqlbinlog"); err == nil {
 		return path, nil
@@ -533,7 +545,7 @@ func findMySQLBinlog(ctx context.Context, conn *connector.MySQLConnector) (strin
 		}
 	}
 
-	return "", fmt.Errorf("mysqlbinlog not found in $PATH, MySQL basedir, or common installation paths; install mysql-client or add mysqlbinlog to your PATH")
+	return "", fmt.Errorf("mysqlbinlog not found; install mysql-client or specify the path in the mysqlbinlog_path field")
 }
 
 // parseBinlogRemote uses mysqlbinlog --read-from-remote-server to parse binlog
@@ -797,7 +809,7 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 	if len(paths) > 0 {
 		if _, statErr := os.Stat(paths[0]); os.IsNotExist(statErr) {
 			log.Printf("pitr: binlog files not accessible locally, trying mysqlbinlog remote for op %s", op.ID)
-			mysqlbinlogPath, findErr := findMySQLBinlog(ctx, conn)
+			mysqlbinlogPath, findErr := findMySQLBinlog(op.MySQLBinlogPath, ctx, conn)
 			if findErr != nil {
 				h.failOperation(op, "parse binlogs (remote): %v", findErr)
 				return
