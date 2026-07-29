@@ -32,7 +32,7 @@ type Operation struct {
 type PreflightResult struct {
 	CheckedAt     time.Time `json:"checkedAt"`
 	BinlogFiles   []string  `json:"binlogFiles"`
-	EarliestTime  time.Time `json:"earliestTime"`
+	EarliestTime  time.Time `json:"earliestTime,omitempty"`
 	EstimatedSize int64     `json:"estimatedSize"`
 }
 

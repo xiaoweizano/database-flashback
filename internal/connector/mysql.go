@@ -184,7 +184,22 @@ func (m *MySQLConnector) GetBinlogDir(ctx context.Context) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// ParseBinlog
+// GetBasedir
+// ---------------------------------------------------------------------------
+
+func (m *MySQLConnector) GetBasedir(ctx context.Context) (string, error) {
+	if m.db == nil {
+		return "", fmt.Errorf("connector: not connected")
+	}
+	var name, basedir string
+	if err := m.db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'basedir'").Scan(&name, &basedir); err != nil {
+		return "", fmt.Errorf("connector: query basedir: %w", err)
+	}
+	if basedir == "" {
+		return "", fmt.Errorf("connector: basedir is empty")
+	}
+	return basedir, nil
+}
 // ---------------------------------------------------------------------------
 // ParseBinlog verifies that the requested binlog files exist and returns any
 // parse errors. Actual event-level parsing is delegated to the parser package
