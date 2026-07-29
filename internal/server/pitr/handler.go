@@ -512,15 +512,17 @@ func findMySQLBinlog(mysqlbinlogPath string, ctx context.Context, conn *connecto
 		return "", fmt.Errorf("specified mysqlbinlog path %q does not exist", mysqlbinlogPath)
 	}
 
-	// 1. Try PATH first.
-	if path, err := exec.LookPath("mysqlbinlog"); err == nil {
-		return path, nil
+	// 1. Try PATH first (supports both mysqlbinlog and mariadb-binlog).
+	for _, name := range []string{"mysqlbinlog", "mariadb-binlog"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
 	}
 
 	// 2. Try MySQL basedir (SHOW VARIABLES LIKE 'basedir').
 	basedir, err := conn.GetBasedir(ctx)
 	if err == nil && basedir != "" {
-		for _, name := range []string{"mysqlbinlog", "mysqlbinlog.exe"} {
+		for _, name := range []string{"mysqlbinlog", "mysqlbinlog.exe", "mariadb-binlog"} {
 			candidate := filepath.Join(basedir, "bin", name)
 			if fi, statErr := os.Stat(candidate); statErr == nil && fi.Mode().IsRegular() {
 				abs, _ := filepath.Abs(candidate)
@@ -532,6 +534,7 @@ func findMySQLBinlog(mysqlbinlogPath string, ctx context.Context, conn *connecto
 	// 3. Common installation paths.
 	commonPaths := []string{
 		"/usr/bin/mysqlbinlog",
+		"/usr/bin/mariadb-binlog",
 		"/usr/local/mysql/bin/mysqlbinlog",
 		"/opt/homebrew/bin/mysqlbinlog",
 		"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqlbinlog.exe",
