@@ -169,7 +169,7 @@
     "mysqlDsnPlaceholder": "user:password@tcp(127.0.0.1:3306)/database",
     "mysqlbinlogPath": "mysqlbinlog path (optional)",
     "mysqlbinlogPathHelp": "Leave empty to auto-discover from system PATH",
-    "mysqlbinlogPathPlaceholder": "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqlbinlog.exe",
+    "mysqlbinlogPathPlaceholder": "C:\\\\Program Files\\\\MySQL\\\\MySQL Server 8.0\\\\bin\\\\mysqlbinlog.exe",
     "targetTablePlaceholder": "e.g. mydb.orders",
     "calculating": "Calculating...",
     "updatedAt": "Updated At",
