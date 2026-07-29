@@ -54,7 +54,9 @@ ENTRYPOINT ["mysql-pitr-agent"]
 # =============================================================================
 FROM alpine:3.20 AS server
 
-RUN apk add --no-cache ca-certificates tzdata mysql-client
+RUN apk add --no-cache ca-certificates tzdata mariadb-client && \
+    ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
+    test -x /usr/bin/mysqlbinlog
 
 COPY --from=builder /build/mysql-pitr-server /usr/local/bin/mysql-pitr-server
 
