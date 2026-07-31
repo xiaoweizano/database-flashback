@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
-  Steps, Card, Form, Select, Input, DatePicker, Button, Typography,
+  Steps, Card, Form, Select, Input, InputNumber, DatePicker, Button, Typography,
   Spin, Empty, Alert, Progress, Descriptions, Space, Tag, message, notification,
 } from 'antd';
 import {
@@ -50,8 +50,10 @@ export default function PITRWizardPage() {
   const [selectedAgentHostname, setSelectedAgentHostname] = useState<string | null>(null);
   const [targetTable, setTargetTable] = useState('');
   const [recoveryTime, setRecoveryTime] = useState('');
-  const [mysqlDsn, setMysqlDsn] = useState('');
-  const [mysqlBinlogPath, setMysqlBinlogPath] = useState('');
+  const [binlogFiles, setBinlogFiles] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [startPos, setStartPos] = useState<number | null>(null);
+  const [stopPos, setStopPos] = useState<number | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
 
   // Fetch agents list
@@ -68,7 +70,7 @@ export default function PITRWizardPage() {
   });
 
   const availableAgents = useMemo(
-    () => agentsQuery.data ?? [],
+    () => (agentsQuery.data ?? []).filter((a: AgentInfo) => a.status === 'online' && a.approved),
     [agentsQuery.data],
   );
 
@@ -99,8 +101,12 @@ export default function PITRWizardPage() {
       target_table: targetTable,
       recovery_time: dayjs(recoveryTime).toISOString(),
       mode: 'execute',
-      mysql_dsn: mysqlDsn,
-      mysqlbinlog_path: mysqlBinlogPath || undefined,
+      binlog_files: binlogFiles
+        ? binlogFiles.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined,
+      start_time: startTime ? dayjs(startTime).toISOString() : undefined,
+      start_pos: startPos ?? undefined,
+      stop_pos: stopPos ?? undefined,
     }),
     onSuccess: (data) => {
       setOperationId(data.operationId);
@@ -149,12 +155,12 @@ export default function PITRWizardPage() {
   }, [currentStep, operationId, cancelMutation]);
 
   const handleNextFromStep1 = useCallback(() => {
-    if (!selectedAgentId || !targetTable || !recoveryTime || !mysqlDsn) {
+    if (!selectedAgentId || !targetTable || !recoveryTime) {
       message.warning(t('common.error'));
       return;
     }
     startMutation.mutate();
-  }, [selectedAgentId, targetTable, recoveryTime, mysqlDsn, startMutation]);
+  }, [selectedAgentId, targetTable, recoveryTime, startMutation]);
 
   // Compute progress bar percent
   const progressPercent = useMemo(() => {
@@ -183,10 +189,20 @@ export default function PITRWizardPage() {
         />
       );
     }
-    if (availableAgents.length === 0) {
+    if ((agentsQuery.data ?? []).length === 0) {
       return (
         <Empty description={t('pitr.noAgents')}>
           <Text type="secondary">{t('pitr.noAgentsDesc')}</Text>
+          <br /><br />
+          <Button type="primary" onClick={() => navigate('/agents')}>{t('pitr.goToAgents')}</Button>
+        </Empty>
+      );
+    }
+
+    if (availableAgents.length === 0) {
+      return (
+        <Empty description={t('pitr.noOnlineAgents')}>
+          <Text type="secondary">{t('pitr.noOnlineAgentsDesc')}</Text>
           <br /><br />
           <Button type="primary" onClick={() => navigate('/agents')}>{t('pitr.goToAgents')}</Button>
         </Empty>
@@ -210,7 +226,10 @@ export default function PITRWizardPage() {
           >
             {availableAgents.map((agent: AgentInfo) => (
               <Option key={agent.id} value={agent.id}>
-                {agent.hostname} - MySQL {agent.mySQLVersion || 'N/A'}
+                <Space>
+                  {agent.hostname} - MySQL {agent.mySQLVersion || 'N/A'}
+                  <Tag color="green">{t('pitr.connected')}</Tag>
+                </Space>
               </Option>
             ))}
           </Select>
@@ -251,20 +270,46 @@ export default function PITRWizardPage() {
           onChange={(date) => setRecoveryTime(date ? date.toISOString() : '')}
         />
       </Form.Item>
-      <Form.Item label={t('pitr.mysqlDsn')} required help={t('pitr.mysqlDsnHelp')}>
-        <Input.Password
-          placeholder={t('pitr.mysqlDsnPlaceholder')}
-          value={mysqlDsn}
-          onChange={(e) => setMysqlDsn(e.target.value)}
-        />
-      </Form.Item>
-      <Form.Item label={t('pitr.mysqlbinlogPath')} help={t('pitr.mysqlbinlogPathHelp')}>
-        <Input
-          placeholder={t('pitr.mysqlbinlogPathPlaceholder')}
-          value={mysqlBinlogPath}
-          onChange={(e) => setMysqlBinlogPath(e.target.value)}
-        />
-      </Form.Item>
+      <Card size="small" title={t('pitr.parseTargeting')} style={{ marginBottom: 24 }}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          {t('pitr.parseTargetingHelp')}
+        </Text>
+        <Form.Item label={t('pitr.binlogFiles')} help={t('pitr.binlogFilesHelp')}>
+          <Input
+            placeholder={t('pitr.binlogFilesPlaceholder')}
+            value={binlogFiles}
+            onChange={(e) => setBinlogFiles(e.target.value)}
+          />
+        </Form.Item>
+        <Form.Item label={t('pitr.startTime')} help={t('pitr.startTimeHelp')}>
+          <DatePicker
+            showTime
+            style={{ width: '100%' }}
+            value={startTime ? dayjs(startTime) : null}
+            onChange={(date) => setStartTime(date ? date.toISOString() : '')}
+          />
+        </Form.Item>
+        <Space size="large">
+          <Form.Item label={t('pitr.startPos')} help={t('pitr.startPosHelp')}>
+            <InputNumber
+              min={0}
+              style={{ width: 180 }}
+              value={startPos}
+              onChange={(v) => setStartPos(v)}
+              placeholder="0"
+            />
+          </Form.Item>
+          <Form.Item label={t('pitr.stopPos')} help={t('pitr.stopPosHelp')}>
+            <InputNumber
+              min={0}
+              style={{ width: 180 }}
+              value={stopPos}
+              onChange={(v) => setStopPos(v)}
+              placeholder="0"
+            />
+          </Form.Item>
+        </Space>
+      </Card>
     </Form>
   );
 

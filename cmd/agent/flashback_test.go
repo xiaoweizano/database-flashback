@@ -43,6 +43,10 @@ func (m *mockConnector) GetBinlogFiles(ctx context.Context) ([]connector.BinlogF
 	return m.binlogFiles, m.binlogErr
 }
 
+func (m *mockConnector) GetBinlogDir(ctx context.Context) (string, error) {
+	return "/var/lib/mysql/", nil
+}
+
 func (m *mockConnector) ParseBinlog(ctx context.Context, req connector.ParseRequest) (*connector.ParseResult, error) {
 	return m.parseResult, m.parseErr
 }
@@ -60,9 +64,20 @@ func (m *mockConnector) Close() error {
 	return nil
 }
 
+// withFakeParse substitutes the mysqlbinlog parse seam for the duration of a
+// test, returning a fake result so flashback orchestration can be tested
+// without a live MySQL server.
+func withFakeParse(t *testing.T, result *connector.ParseResult, parseErr error) {
+	t.Helper()
+	orig := mysqlbinlogParse
+	mysqlbinlogParse = func(cfg connector.ConnConfig, paths []string, opts binlogParseOpts) (*connector.ParseResult, error) {
+		return result, parseErr
+	}
+	t.Cleanup(func() { mysqlbinlogParse = orig })
+}
+
 // defaultMock creates a mock connector configured for a successful flashback.
-func defaultMock() *mockConnector {
-	return &mockConnector{
+func defaultMock() *mockConnector {	return &mockConnector{
 		preflightResult: &connector.PreflightResult{
 			Status:  connector.PreflightPass,
 			Version: "8.0.32",
@@ -171,6 +186,7 @@ func TestFlashbackCommand_ValidatesRequiredFlags(t *testing.T) {
 
 func TestRunFlashback_DryRun(t *testing.T) {
 	mock := defaultMock()
+	withFakeParse(t, mock.parseResult, nil)
 	opts := FlashbackOptions{
 		Connector:    mock,
 		DSN:          "root:pass@tcp(127.0.0.1:3306)/mydb",
@@ -190,6 +206,7 @@ func TestRunFlashback_OutputFile(t *testing.T) {
 	outputPath := filepath.Join(dir, "rollback.sql")
 
 	mock := defaultMock()
+	withFakeParse(t, mock.parseResult, nil)
 	opts := FlashbackOptions{
 		Connector:    mock,
 		DSN:          "root:pass@tcp(127.0.0.1:3306)/mydb",
@@ -212,6 +229,7 @@ func TestRunFlashback_OutputFile(t *testing.T) {
 
 func TestRunFlashback_Execute(t *testing.T) {
 	mock := defaultMock()
+	withFakeParse(t, mock.parseResult, nil)
 	opts := FlashbackOptions{
 		Connector:    mock,
 		DSN:          "root:pass@tcp(127.0.0.1:3306)/mydb",
@@ -248,10 +266,10 @@ func TestRunFlashback_PreflightFail(t *testing.T) {
 
 func TestRunFlashback_NoEvents(t *testing.T) {
 	mock := defaultMock()
-	mock.parseResult = &connector.ParseResult{
+	withFakeParse(t, &connector.ParseResult{
 		TotalRows: 0,
 		Events:    []connector.RowEvent{},
-	}
+	}, nil)
 
 	opts := FlashbackOptions{
 		Connector:    mock,
@@ -284,6 +302,7 @@ func TestRunFlashback_NoBinlogs(t *testing.T) {
 func TestRunFlashback_ConnectorProvided(t *testing.T) {
 	// When using a pre-injected connector, DSN is not required.
 	mock := defaultMock()
+	withFakeParse(t, mock.parseResult, nil)
 	opts := FlashbackOptions{
 		Connector:    mock,
 		TargetTable:  "mydb.orders",
@@ -425,7 +444,7 @@ func TestNewRootCommand_HasFlashbackSubcommand(t *testing.T) {
 
 func TestRunFlashback_ParseError(t *testing.T) {
 	mock := defaultMock()
-	mock.parseErr = errors.New("binlog file corrupted")
+	withFakeParse(t, nil, errors.New("binlog file corrupted"))
 
 	opts := FlashbackOptions{
 		Connector:    mock,

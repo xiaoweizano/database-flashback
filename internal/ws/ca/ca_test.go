@@ -129,7 +129,7 @@ func TestSignCSR(t *testing.T) {
 	if cert.Subject.CommonName != "agent-1" {
 		t.Errorf("expected CN 'agent-1', got %q", cert.Subject.CommonName)
 	}
-	if !cert.IsCA {
+	if cert.IsCA {
 		t.Error("signed client cert should not be CA")
 	}
 
@@ -137,7 +137,8 @@ func TestSignCSR(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(ca.rootCert)
 	opts := x509.VerifyOptions{
-		Roots: roots,
+		Roots:     roots,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	if _, err := cert.Verify(opts); err != nil {
 		t.Errorf("cert verification against CA root failed: %v", err)

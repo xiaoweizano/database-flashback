@@ -96,6 +96,7 @@ export interface PITROperation {
   id: string;
   orgId: string;
   agentId: string;
+  agentConnected: boolean;
   targetTable: string;
   recoveryTime: string;
   mode: string;

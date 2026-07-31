@@ -2,6 +2,7 @@ package pitr
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,13 +10,89 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-shan/mysql-pitr/internal/connector"
 	"github.com/a-shan/mysql-pitr/internal/server/agent"
 	"github.com/a-shan/mysql-pitr/internal/server/audit"
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
 	"github.com/a-shan/mysql-pitr/internal/server/org"
+	"github.com/a-shan/mysql-pitr/internal/ws"
+	"github.com/a-shan/mysql-pitr/internal/ws/hub"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeCommander implements AgentCommander with canned responses per command
+// type, so the operation state machine can be tested without a live agent.
+type fakeCommander struct {
+	connected   bool
+	preflightFn func() (*ws.Response, error)
+	parseFn     func() (*ws.Response, error)
+	executeFn   func() (*ws.Response, error)
+	sent        []ws.Command
+}
+
+func (f *fakeCommander) IsConnected(agentID string) bool { return f.connected }
+
+func (f *fakeCommander) SendToAgent(ctx context.Context, agentID string, cmd ws.Command) (*ws.Response, error) {
+	f.sent = append(f.sent, cmd)
+	switch cmd.Type {
+	case ws.CmdPreflight:
+		return f.preflightFn()
+	case ws.CmdPITRParse:
+		return f.parseFn()
+	case ws.CmdPITRExecute:
+		return f.executeFn()
+	default:
+		return &ws.Response{Cmd: cmd.Cmd, Status: ws.StatusOK, Result: "ok"}, nil
+	}
+}
+
+func (f *fakeCommander) SetProgressHandler(fn hub.ProgressHandler) {}
+
+// successCommander returns a fake commander wired for a successful
+// preflight → parse → execute flow.
+func successCommander() *fakeCommander {
+	return &fakeCommander{
+		connected: true,
+		preflightFn: func() (*ws.Response, error) {
+			return &ws.Response{Cmd: "preflight", Status: ws.StatusOK, Result: agentPreflightResult{
+				Preflight: &connector.PreflightResult{
+					Status:  connector.PreflightPass,
+					Version: "8.0.32",
+					Checks: []connector.PreflightCheck{
+						{Name: "MySQL Version", Status: connector.PreflightPass},
+					},
+				},
+				BinlogFiles: []string{"mysql-bin.000001"},
+				TotalSize:   1024,
+			}}, nil
+		},
+		parseFn: func() (*ws.Response, error) {
+			sqls := make([]string, 1250)
+			preview := make([]ReverseSqlEntry, 1000)
+			for i := range sqls {
+				sqls[i] = "DELETE FROM `orders` WHERE `id` = 1 LIMIT 1;"
+				if i < len(preview) {
+					preview[i] = ReverseSqlEntry{Sequence: i + 1, SqlType: "DELETE", TableName: "orders", ReverseSql: sqls[i]}
+				}
+			}
+			return &ws.Response{Cmd: "parse", Status: ws.StatusOK, Result: agentParseResult{
+				TotalRows:  1250,
+				ReverseSql: sqls,
+				Preview:    preview,
+				SQLSample:  sqls[0],
+			}}, nil
+		},
+		executeFn: func() (*ws.Response, error) {
+			return &ws.Response{Cmd: "execute", Status: ws.StatusOK, Result: agentExecuteResult{
+				RowsAffected:     1250,
+				BatchesCompleted: 10,
+				BatchesTotal:     10,
+			}}, nil
+		},
+	}
+}
 
 // test helpers
 
@@ -26,6 +103,7 @@ type testFixture struct {
 	orgStore   *org.InMemoryOrgStore
 	auditStore *audit.InMemoryAuditStore
 	userStore  *auth.InMemoryUserStore
+	commander  *fakeCommander
 	secret     []byte
 }
 
@@ -37,7 +115,8 @@ func setupTest(t *testing.T) *testFixture {
 	auditStore := audit.NewInMemoryAuditStore()
 	userStore := auth.NewInMemoryUserStore()
 	secret := []byte("pitr-test-secret")
-	handler := NewHandler(opStore, agentStore, orgStore, auditStore, secret)
+	commander := successCommander()
+	handler := NewHandler(opStore, agentStore, orgStore, auditStore, secret, commander)
 	return &testFixture{
 		handler:    handler,
 		opStore:    opStore,
@@ -45,14 +124,20 @@ func setupTest(t *testing.T) *testFixture {
 		orgStore:   orgStore,
 		auditStore: auditStore,
 		userStore:  userStore,
+		commander:  commander,
 		secret:     secret,
 	}
 }
 
+// userSeq makes fixture user emails unique even when two users are created
+// within the same clock tick.
+var userSeq int64
+
 func (f *testFixture) createUser(t *testing.T) string {
 	t.Helper()
+	userSeq++
 	user := &auth.User{
-		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
+		Email:          fmt.Sprintf("%s-%d-%d@example.com", t.Name(), time.Now().UnixNano(), userSeq),
 		HashedPassword: "hash",
 	}
 	err := f.userStore.Create(user)
@@ -92,6 +177,17 @@ func (f *testFixture) authenticatedRequest(t *testing.T, method, target string, 
 	claims := &auth.Claims{UserID: userID, Email: "test@example.com"}
 	req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
 	return req
+}
+
+// authenticatedRouteRequest builds an authenticated request with a chi route
+// context so chi.URLParam("id") resolves to id (handlers invoked directly,
+// without a router, need this).
+func (f *testFixture) authenticatedRouteRequest(t *testing.T, method, target, id string, body interface{}, userID string) *http.Request {
+	t.Helper()
+	req := f.authenticatedRequest(t, method, target, body, userID)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
 // waitForOperationState polls the store until the operation reaches one of the
@@ -312,7 +408,7 @@ func TestStatus_Success(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/status", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/status", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Status(w, req)
 
@@ -331,7 +427,7 @@ func TestStatus_NotFound(t *testing.T) {
 	userID := f.createUser(t)
 	f.createOrg(t, userID)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/nonexistent/status", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/nonexistent/status", "nonexistent", nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Status(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -361,7 +457,7 @@ func TestStatus_NotMember(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/status", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/status", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Status(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -376,15 +472,15 @@ func TestCancel_Success(t *testing.T) {
 	agentID := f.createAgent(t, orgID)
 
 	op := &Operation{
-		OrgID:   orgID,
-		AgentID: agentID,
+		OrgID:       orgID,
+		AgentID:     agentID,
 		TargetTable: "orders",
-		State:   StatePreflight,
+		State:       StatePreflight,
 	}
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/cancel", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/cancel", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Cancel(w, req)
 
@@ -416,7 +512,7 @@ func TestCancel_InvalidState(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/cancel", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/cancel", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Cancel(w, req)
 	assert.Equal(t, http.StatusConflict, w.Code)
@@ -427,7 +523,7 @@ func TestCancel_NotFound(t *testing.T) {
 	userID := f.createUser(t)
 	f.createOrg(t, userID)
 
-	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/nonexistent/cancel", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/nonexistent/cancel", "nonexistent", nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Cancel(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -464,7 +560,7 @@ func TestPreview_Success(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/preview", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/preview", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Preview(w, req)
 
@@ -491,7 +587,7 @@ func TestPreview_NotReady(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/preview", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/preview", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Preview(w, req)
 	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
@@ -519,16 +615,16 @@ func TestProgress_Success(t *testing.T) {
 		AgentID: agentID,
 		State:   StateExecuting,
 		Progress: &ProgressInfo{
-			BatchesComplete:   3,
-			BatchesTotal:      10,
-			RowsRestored:      375,
+			BatchesComplete:    3,
+			BatchesTotal:       10,
+			RowsRestored:       375,
 			EstimatedRemaining: "21s",
 		},
 	}
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/progress", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/progress", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Progress(w, req)
 
@@ -558,7 +654,7 @@ func TestProgress_NoProgressYet(t *testing.T) {
 	err := f.opStore.Create(op)
 	require.NoError(t, err)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/progress", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/"+op.ID+"/progress", op.ID, nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Progress(w, req)
 
@@ -588,7 +684,7 @@ func TestProgress_NotFound(t *testing.T) {
 	userID := f.createUser(t)
 	f.createOrg(t, userID)
 
-	req := f.authenticatedRequest(t, http.MethodGet, "/api/pitr/nonexistent/progress", nil, userID)
+	req := f.authenticatedRouteRequest(t, http.MethodGet, "/api/pitr/nonexistent/progress", "nonexistent", nil, userID)
 	w := httptest.NewRecorder()
 	f.handler.Progress(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)

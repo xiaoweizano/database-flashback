@@ -1,7 +1,6 @@
 package server
 
 import (
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,31 +15,17 @@ import (
 	"github.com/a-shan/mysql-pitr/internal/server/pitr"
 )
 
-// NewRouter creates and configures a chi router with all API routes mounted.
-func NewRouter() *chi.Mux {
-	// Load JWT signing key from environment, with a compile-time default for
-	// local development. In production, always set JWT_SECRET to a unique,
-	// unpredictable value.
-	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
-	if len(jwtSecret) == 0 {
-		jwtSecret = []byte("change-me-in-production")
-		log.Println("WARNING: JWT_SECRET not set — using insecure default. Set JWT_SECRET for production.")
-	}
-
-	// Initialise in-memory stores.
-	userStore := auth.NewInMemoryUserStore()
-	orgStore := org.NewInMemoryOrgStore()
-	agentStore := agent.NewInMemoryAgentStore()
-	pitrStore := pitr.NewInMemoryOperationStore()
-	auditStore := audit.NewInMemoryAuditStore()
-
-	// Initialise handlers.
-	authHandler := auth.NewHandler(userStore, jwtSecret)
-	orgHandler := org.NewHandler(orgStore, userStore, jwtSecret)
-	agentHandler := agent.NewHandler(agentStore, orgStore, jwtSecret)
-	pitrHandler := pitr.NewHandler(pitrStore, agentStore, orgStore, auditStore, jwtSecret)
-	auditHandler := audit.NewHandler(auditStore, orgStore, jwtSecret)
-
+// newWebRouter builds the REST + SPA router from pre-initialised handlers.
+func newWebRouter(
+	agentStore agent.AgentStore,
+	orgStore org.OrgStore,
+	userStore auth.UserStore,
+	authHandler *auth.Handler,
+	orgHandler *org.Handler,
+	agentHandler *agent.Handler,
+	pitrHandler *pitr.Handler,
+	auditHandler *audit.Handler,
+) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Global middleware.
@@ -124,4 +109,28 @@ func NewRouter() *chi.Mux {
 	})
 
 	return r
+}
+
+// NewRouter creates and configures a chi router with all API routes mounted.
+// It wires a fresh in-memory CA + hub; production deployments should use
+// New() from server.go for a persistent CA and the mTLS agent listener.
+func NewRouter() *chi.Mux {
+	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtSecret) == 0 {
+		jwtSecret = []byte("change-me-in-production")
+	}
+
+	userStore := auth.NewInMemoryUserStore()
+	orgStore := org.NewInMemoryOrgStore()
+	agentStore := agent.NewInMemoryAgentStore()
+	pitrStore := pitr.NewInMemoryOperationStore()
+	auditStore := audit.NewInMemoryAuditStore()
+
+	authHandler := auth.NewHandler(userStore, jwtSecret)
+	orgHandler := org.NewHandler(orgStore, userStore, jwtSecret)
+	agentHandler := agent.NewHandler(agentStore, orgStore, jwtSecret)
+	pitrHandler := pitr.NewHandler(pitrStore, agentStore, orgStore, auditStore, jwtSecret, nil)
+	auditHandler := audit.NewHandler(auditStore, orgStore, jwtSecret)
+
+	return newWebRouter(agentStore, orgStore, userStore, authHandler, orgHandler, agentHandler, pitrHandler, auditHandler)
 }

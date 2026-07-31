@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -26,10 +27,15 @@ func setupAuditTest(t *testing.T) (*Handler, *InMemoryAuditStore, *org.InMemoryO
 	return handler, auditStore, orgStore, userStore, secret
 }
 
+// auditUserSeq makes fixture user emails unique even when two users are
+// created within the same clock tick.
+var auditUserSeq int64
+
 func createTestUser(t *testing.T, store *auth.InMemoryUserStore) string {
 	t.Helper()
+	auditUserSeq++
 	user := &auth.User{
-		Email:          fmt.Sprintf("%s-%d@example.com", t.Name(), time.Now().UnixNano()),
+		Email:          fmt.Sprintf("%s-%d-%d@example.com", t.Name(), time.Now().UnixNano(), auditUserSeq),
 		HashedPassword: "hash",
 	}
 	err := store.Create(user)
@@ -190,8 +196,8 @@ func TestQuery_FilterByTimeRange(t *testing.T) {
 	seedAuditEntries(t, auditStore, org.ID)
 
 	now := time.Now()
-	from := now.Add(-90 * time.Minute).Format(time.RFC3339)
-	to := now.Format(time.RFC3339)
+	from := url.QueryEscape(now.Add(-90 * time.Minute).Format(time.RFC3339))
+	to := url.QueryEscape(now.Format(time.RFC3339))
 	req := authenticatedRequest(t, "/api/audit?org_id="+org.ID+"&from="+from+"&to="+to, userID, secret)
 	w := httptest.NewRecorder()
 	h.Query(w, req)
@@ -200,7 +206,10 @@ func TestQuery_FilterByTimeRange(t *testing.T) {
 	var entries []AuditEntry
 	err = json.NewDecoder(w.Body).Decode(&entries)
 	require.NoError(t, err)
-	assert.Len(t, entries, 2) // the two most recent entries
+	assert.Len(t, entries, 3) // op_002 (-1h), op_003 (-30m), op_004 (-10m) fall inside [-90m, now]
+	for _, e := range entries {
+		assert.NotEqual(t, "op_001", e.OperationID) // -2h is outside the range
+	}
 }
 
 func TestQuery_MissingOrgID(t *testing.T) {

@@ -53,6 +53,12 @@ type Hub struct {
 	// csrHandler is optional; if set, the hub handles cert_renewal commands
 	// inline by delegating to this handler.
 	csrHandler CSRHandler
+
+	// progressHandler receives pitr_progress notifications from agents.
+	progressHandler ProgressHandler
+
+	// lifecycle hooks for agent connect/disconnect events.
+	hooks LifecycleHooks
 }
 
 // NewHub creates a Hub. The caCertFile parameter is reserved for loading the
@@ -68,6 +74,23 @@ func NewHub(caCertFile string) *Hub {
 // certificate renewal processing.
 func (h *Hub) SetCSRHandler(csr CSRHandler) {
 	h.csrHandler = csr
+}
+
+// SetProgressHandler registers a handler for agent-pushed pitr_progress
+// notifications.
+func (h *Hub) SetProgressHandler(fn ProgressHandler) {
+	h.progressHandler = fn
+}
+
+// SetLifecycleHooks registers connect/disconnect callbacks.
+func (h *Hub) SetLifecycleHooks(hooks LifecycleHooks) {
+	h.hooks = hooks
+}
+
+// IsConnected reports whether the given agent currently has a live connection.
+func (h *Hub) IsConnected(agentID string) bool {
+	_, ok := h.conns.Load(agentID)
+	return ok
 }
 
 // HandleConnection registers a WebSocket connection that has already been
@@ -118,6 +141,10 @@ func (h *Hub) HandleConnection(conn *gorilla.Conn, r *http.Request) {
 		return
 	}
 
+	if h.hooks.OnConnect != nil {
+		h.hooks.OnConnect(agentID)
+	}
+
 	go h.readPump(ac)
 }
 
@@ -131,6 +158,19 @@ func (h *Hub) readPump(ac *agentConn) {
 	defer func() {
 		h.conns.Delete(agentID)
 		_ = conn.Close()
+
+		// Drain pending command channels so blocked SendToAgent callers
+		// observe the disconnection instead of hanging forever.
+		ac.pendingMu.Lock()
+		for id, ch := range ac.pending {
+			close(ch)
+			delete(ac.pending, id)
+		}
+		ac.pendingMu.Unlock()
+
+		if h.hooks.OnDisconnect != nil {
+			h.hooks.OnDisconnect(agentID)
+		}
 		log.Printf("hub: agent %s disconnected", agentID)
 	}()
 
@@ -164,6 +204,14 @@ func (h *Hub) readPump(ac *agentConn) {
 		var cmd ws.Command
 		if err := json.Unmarshal(message, &cmd); err == nil && cmd.Type == ws.CmdCertRenewal {
 			h.handleCertRenewal(ac, cmd)
+			continue
+		}
+
+		// Route agent-pushed progress notifications to the registered handler.
+		if err := json.Unmarshal(message, &cmd); err == nil && cmd.Type == ws.CmdPITRProgress {
+			if h.progressHandler != nil {
+				go h.progressHandler(agentID, cmd)
+			}
 			continue
 		}
 
@@ -278,6 +326,11 @@ func (h *Hub) SendToAgent(ctx context.Context, agentID string, cmd ws.Command) (
 
 	select {
 	case resp := <-ch:
+		if resp == nil {
+			// Channel closed by the read pump: the agent disconnected while
+			// the command was in flight.
+			return nil, fmt.Errorf("hub: agent %s disconnected while awaiting response", agentID)
+		}
 		return resp, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()

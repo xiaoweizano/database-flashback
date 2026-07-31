@@ -226,6 +226,7 @@ func TestApproveAgent_NonAdmin(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost,
 		"/api/agents/"+agent.ID+"/approve", nil, memberID, secret)
+	req = withChiURLParam(req, "id", agent.ID)
 	w := httptest.NewRecorder()
 	h.Approve(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -238,6 +239,7 @@ func TestApproveAgent_NotFound(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodPost,
 		"/api/agents/nonexistent/approve", nil, adminID, secret)
+	req = withChiURLParam(req, "id", "nonexistent")
 	w := httptest.NewRecorder()
 	h.Approve(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -258,6 +260,7 @@ func TestGetAgent_Success(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet,
 		"/api/agents/"+agent.ID, nil, adminID, secret)
+	req = withChiURLParam(req, "id", agent.ID)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
 
@@ -281,6 +284,7 @@ func TestGetAgent_NonMember(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet,
 		"/api/agents/"+agent.ID, nil, otherID, secret)
+	req = withChiURLParam(req, "id", agent.ID)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -293,6 +297,7 @@ func TestGetAgent_NotFound(t *testing.T) {
 
 	req := authenticatedRequest(t, http.MethodGet,
 		"/api/agents/nonexistent", nil, adminID, secret)
+	req = withChiURLParam(req, "id", "nonexistent")
 	w := httptest.NewRecorder()
 	h.Get(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)

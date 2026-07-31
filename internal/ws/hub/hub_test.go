@@ -258,65 +258,41 @@ func TestSendToAgent(t *testing.T) {
 	conn := dialTestAgent(t, serverURL, bundle, "agent-cmd")
 	defer conn.Close()
 
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("read command: %v", err)
-	}
-
-	var cmd ws.Command
-	if err := json.Unmarshal(msg, &cmd); err != nil {
-		t.Fatalf("unmarshal command: %v", err)
-	}
-	if cmd.Type != "test-command" {
-		t.Errorf("expected type 'test-command', got %q", cmd.Type)
-	}
-
-	// Send response.
-	resp := ws.Response{
-		Cmd:    cmd.Cmd,
-		Status: ws.StatusOK,
-		Result: "done",
-	}
-	data, _ := json.Marshal(resp)
-	_ = conn.WriteMessage(gorilla.TextMessage, data)
-
-	// Now verify via hub's SendToAgent.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cmd2 := ws.Command{
-		Cmd:  "cmd-2",
+	// Send a command via the hub and verify the agent receives it and the
+	// response is correlated back.
+	cmd := ws.Command{
+		Cmd:  "cmd-1",
 		Type: "test-command",
 	}
 	go func() {
-		time.Sleep(200 * time.Millisecond)
-		// The agent will receive this and respond.
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		_, msg2, err := conn.ReadMessage()
 		if err != nil {
-			t.Logf("agent read command 2: %v", err)
+			t.Logf("agent read command: %v", err)
 			return
 		}
 		var cmd2r ws.Command
 		if err := json.Unmarshal(msg2, &cmd2r); err != nil {
-			t.Logf("unmarshal cmd2: %v", err)
+			t.Logf("unmarshal cmd: %v", err)
 			return
 		}
-		resp2 := ws.Response{Cmd: cmd2r.Cmd, Status: ws.StatusOK, Result: "cmd2-done"}
+		resp2 := ws.Response{Cmd: cmd2r.Cmd, Status: ws.StatusOK, Result: "cmd1-done"}
 		d, _ := json.Marshal(resp2)
 		_ = conn.WriteMessage(gorilla.TextMessage, d)
 	}()
 
-	gotResp, err := hub.SendToAgent(ctx, "agent-cmd", cmd2)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	gotResp, err := hub.SendToAgent(ctx, "agent-cmd", cmd)
 	if err != nil {
 		t.Fatalf("SendToAgent: %v", err)
 	}
 	if gotResp.Status != ws.StatusOK {
 		t.Errorf("expected ok, got %q", gotResp.Status)
 	}
-	if gotResp.Result != "cmd2-done" {
-		t.Errorf("expected result 'cmd2-done', got %v", gotResp.Result)
+	if gotResp.Result != "cmd1-done" {
+		t.Errorf("expected result 'cmd1-done', got %v", gotResp.Result)
 	}
 }
 
@@ -327,6 +303,107 @@ func TestSendToAgentNotConnected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown agent")
+	}
+}
+
+func TestPITRProgressDelivery(t *testing.T) {
+	bundle := generateTestCerts(t, "progress-agent")
+	hub := NewHub("")
+
+	received := make(chan ws.Command, 1)
+	hub.SetProgressHandler(func(agentID string, cmd ws.Command) {
+		received <- cmd
+	})
+
+	serverURL := newTestTLSServer(t, hub, bundle)
+	conn := dialTestAgent(t, serverURL, bundle, "progress-agent")
+	defer conn.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// The agent pushes a pitr_progress notification.
+	progress := ws.Command{
+		Cmd:  "progress-op_1",
+		Type: ws.CmdPITRProgress,
+		Params: map[string]interface{}{
+			"operationId":     "op_1",
+			"batchesComplete": 3,
+			"batchesTotal":    10,
+		},
+	}
+	data, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatalf("marshal progress: %v", err)
+	}
+	if err := conn.WriteMessage(gorilla.TextMessage, data); err != nil {
+		t.Fatalf("write progress: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		if got.Type != ws.CmdPITRProgress {
+			t.Errorf("expected pitr_progress, got %q", got.Type)
+		}
+		if got.Params["operationId"] != "op_1" {
+			t.Errorf("expected operationId op_1, got %v", got.Params["operationId"])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("progress handler was not invoked")
+	}
+}
+
+func TestSendToAgentTimeout(t *testing.T) {
+	bundle := generateTestCerts(t, "timeout-agent")
+	hub := NewHub("")
+
+	serverURL := newTestTLSServer(t, hub, bundle)
+	conn := dialTestAgent(t, serverURL, bundle, "timeout-agent")
+	defer conn.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// No agent goroutine responds — the command must time out.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := hub.SendToAgent(ctx, "timeout-agent", ws.Command{
+		Cmd: "slow", Type: "never-answered",
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+func TestSendToAgentDisconnectDrainsPending(t *testing.T) {
+	bundle := generateTestCerts(t, "drop-agent")
+	hub := NewHub("")
+
+	serverURL := newTestTLSServer(t, hub, bundle)
+	conn := dialTestAgent(t, serverURL, bundle, "drop-agent")
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send a command, then kill the connection while it is in flight. The
+	// pending channel is drained so SendToAgent must return an error instead
+	// of hanging.
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := hub.SendToAgent(context.Background(), "drop-agent", ws.Command{
+			Cmd: "in-flight", Type: "never-answered",
+		})
+		errCh <- err
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	_ = conn.Close()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error after agent disconnect")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SendToAgent hung after agent disconnect")
 	}
 }
 
@@ -460,16 +537,18 @@ func TestCloseIdempotent(t *testing.T) {
 }
 
 func TestHubConcurrency(t *testing.T) {
-	bundle := generateTestCerts(t, "concurrent-agent")
+	// All agents dial with client certs signed by the same CA; the server
+	// trust anchor comes from the first bundle.
+	caBundle := generateTestCerts(t, "concurrent-ca")
 	hub := NewHub("")
 
-	serverURL := newTestTLSServer(t, hub, bundle)
+	serverURL := newTestTLSServer(t, hub, caBundle)
 
 	const numAgents = 5
 	var conns []*gorilla.Conn
 
 	for i := 0; i < numAgents; i++ {
-		b := generateTestCerts(t, fmt.Sprintf("concurrent-%d", i))
+		b := newClientBundle(t, caBundle, fmt.Sprintf("concurrent-%d", i))
 		c := dialTestAgent(t, serverURL, b, fmt.Sprintf("concurrent-%d", i))
 		conns = append(conns, c)
 	}
@@ -486,4 +565,52 @@ func TestHubConcurrency(t *testing.T) {
 		c.Close()
 	}
 	_ = hub.Close()
+}
+
+// newClientBundle creates a client certificate signed by the CA from an
+// existing test bundle, so multiple distinct agent identities can share one
+// trust anchor.
+func newClientBundle(t *testing.T, caBundle *testBundle, cn string) *testBundle {
+	t.Helper()
+
+	caBlock, _ := pem.Decode([]byte(caBundle.CACert))
+	if caBlock == nil {
+		t.Fatal("decode CA cert PEM")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+	caKeyBlock, _ := pem.Decode([]byte(caBundle.CAKey))
+	if caKeyBlock == nil {
+		t.Fatal("decode CA key PEM")
+	}
+	caKey, err := x509.ParseECPrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA key: %v", err)
+	}
+
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	clientTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano() + int64(len(cn))),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTmpl, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create client cert: %v", err)
+	}
+
+	return &testBundle{
+		CACert:     caBundle.CACert,
+		CAKey:      caBundle.CAKey,
+		ClientCert: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})),
+		ClientKey:  string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: marshalECKey(clientKey)})),
+	}
 }

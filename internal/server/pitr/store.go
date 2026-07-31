@@ -11,22 +11,25 @@ import (
 // Operation represents a point-in-time recovery operation and its current
 // state within the workflow state machine.
 type Operation struct {
-	ID              string          `json:"id"`
-	OrgID           string          `json:"orgId"`
-	AgentID         string          `json:"agentId"`
-	TargetTable     string          `json:"targetTable"`
-	RecoveryTime    time.Time       `json:"recoveryTime"`
-	Mode            string          `json:"mode"` // "preview" or "execute"
-	State           OperationState  `json:"state"`
-	DSN             string          `json:"-"`     // MySQL DSN, never exposed to frontend
-	MySQLBinlogPath string          `json:"-"`     // Optional explicit mysqlbinlog path
-	PreflightRes    *PreflightResult `json:"preflightResult,omitempty"`
-	ParseRes        *ParseSummary   `json:"parseResult,omitempty"`
-	ExecRes         *ExecSummary    `json:"execResult,omitempty"`
-	Progress        *ProgressInfo   `json:"progress,omitempty"`
-	Error           string          `json:"error,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	UpdatedAt       time.Time       `json:"updatedAt"`
+	ID             string           `json:"id"`
+	OrgID          string           `json:"orgId"`
+	AgentID        string           `json:"agentId"`
+	TargetTable    string           `json:"targetTable"`
+	RecoveryTime   time.Time        `json:"recoveryTime"`
+	Mode           string           `json:"mode"` // "preview" or "execute"
+	State          OperationState   `json:"state"`
+	BinlogFiles    []string         `json:"binlogFiles,omitempty"`
+	StartTime      *time.Time       `json:"startTime,omitempty"`
+	StartPos       *uint32          `json:"startPos,omitempty"`
+	StopPos        *uint32          `json:"stopPos,omitempty"`
+	AgentConnected bool             `json:"agentConnected"` // decorated at read time
+	PreflightRes   *PreflightResult `json:"preflightResult,omitempty"`
+	ParseRes       *ParseSummary    `json:"parseResult,omitempty"`
+	ExecRes        *ExecSummary     `json:"execResult,omitempty"`
+	Progress       *ProgressInfo    `json:"progress,omitempty"`
+	Error          string           `json:"error,omitempty"`
+	CreatedAt      time.Time        `json:"createdAt"`
+	UpdatedAt      time.Time        `json:"updatedAt"`
 }
 
 // PreflightResult contains the output of the preflight check phase.

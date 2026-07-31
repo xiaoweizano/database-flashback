@@ -125,10 +125,22 @@ setup_config() {
     info "Creating default config at ${CONFIG_DIR}/config.json"
     cat > "${CONFIG_DIR}/config.json" <<-CONFEOF
 {
-  "mysql_dsn": "root:password@tcp(127.0.0.1:3306)/mysql",
-  "flashback_dir": "/var/lib/mysql-pitr/flashback",
-  "listen_addr": ":8080",
-  "log_level": "info"
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "replicator",
+    "password": "change-me",
+    "database": "mysql"
+  },
+  "server": {
+    "url": "wss://pitr.example.com:9443/ws/agent",
+    "cert_file": "/etc/agent/client.pem",
+    "key_file": "/etc/agent/client-key.pem",
+    "ca_file": "/etc/agent/ca.pem"
+  },
+  "data_dir": "/var/lib/mysql-pitr",
+  "binlog_dir": "",
+  "mysqlbinlog_path": ""
 }
 CONFEOF
     pass "Default config created"
@@ -196,8 +208,11 @@ print_summary() {
   echo " Quick start:"
   echo "   mysql-pitr-agent --help"
   echo ""
-  echo " To flashback:"
-  echo "   mysql-pitr-agent flashback --config=${CONFIG_DIR}/config.json"
+  echo " To run as a daemon connected to the server:"
+  echo "   mysql-pitr-agent serve --config=${CONFIG_DIR}/config.json --passphrase=<passphrase>"
+  echo ""
+  echo " For an offline one-shot flashback:"
+  echo "   mysql-pitr-agent flashback --config=${CONFIG_DIR}/config.json --passphrase=<passphrase>"
   echo ""
   if command -v systemctl &>/dev/null && [ "$INSTALL_SYSTEMD" = "true" ]; then
     echo " Service status:"

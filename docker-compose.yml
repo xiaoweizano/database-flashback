@@ -19,17 +19,38 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot provisioning: waits for the server CA, registers an agent via
+  # the API, issues its mTLS client certificate, and writes the encrypted
+  # agent config into the shared agent-config volume.
+  provision:
+    build:
+      context: .
+      target: agent
+    entrypoint: ["/bin/sh", "/scripts/e2e-provision.sh"]
+    environment:
+      PITR_PASSPHRASE: pitr-test
+    depends_on:
+      server:
+        condition: service_started
+    volumes:
+      - ./scripts:/scripts:ro
+      - server-data:/var/lib/mysql-pitr:ro
+      - agent-config:/etc/agent
+    networks:
+      - pitr-network
+    restart: "no"
+
   agent:
     build:
       context: .
       target: agent
-    environment:
-      MYSQL_DSN: "root:pitr_test@tcp(mysql:3306)/pitr_test"
-      AGENT_CONFIG: /etc/agent/config.json
+    command: ["serve", "--config=/etc/agent/config.json", "--passphrase=pitr-test"]
     depends_on:
-      mysql:
-        condition: service_healthy
+      provision:
+        condition: service_completed_successfully
     volumes:
+      - mysql-data:/var/lib/mysql:ro
+      - agent-config:/etc/agent:ro
       - agent-data:/var/lib/mysql-pitr
     networks:
       - pitr-network
@@ -41,11 +62,15 @@ services:
       target: server
     ports:
       - "8080:8080"
+      - "9443:9443"
     environment:
       DATABASE_URL: "root:pitr_test@tcp(mysql:3306)/pitr_server"
       LISTEN_ADDR: ":8080"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      AGENT_LISTEN_ADDR: ":9443"
+      AGENT_DATA_DIR: /var/lib/mysql-pitr
+      AGENT_CERT_HOSTS: "server,localhost,127.0.0.1"
+    volumes:
+      - server-data:/var/lib/mysql-pitr
     depends_on:
       mysql:
         condition: service_healthy
@@ -55,7 +80,9 @@ services:
 
 volumes:
   mysql-data:
+  server-data:
   agent-data:
+  agent-config:
 
 networks:
   pitr-network:

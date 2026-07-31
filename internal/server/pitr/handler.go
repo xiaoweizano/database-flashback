@@ -1,66 +1,117 @@
 package pitr
 
 import (
-	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/a-shan/mysql-pitr/internal/config"
 	"github.com/a-shan/mysql-pitr/internal/connector"
-	"github.com/a-shan/mysql-pitr/internal/parser"
 	"github.com/a-shan/mysql-pitr/internal/server/agent"
 	"github.com/a-shan/mysql-pitr/internal/server/audit"
 	"github.com/a-shan/mysql-pitr/internal/server/auth"
 	"github.com/a-shan/mysql-pitr/internal/server/org"
+	"github.com/a-shan/mysql-pitr/internal/ws"
+	"github.com/a-shan/mysql-pitr/internal/ws/hub"
 )
 
-// Handler serves PITR workflow HTTP endpoints.
+// AgentCommander is the subset of the agent hub the PITR flow needs. The
+// production implementation is *hub.Hub; tests provide a fake.
+type AgentCommander interface {
+	IsConnected(agentID string) bool
+	SendToAgent(ctx context.Context, agentID string, cmd ws.Command) (*ws.Response, error)
+	SetProgressHandler(fn hub.ProgressHandler)
+}
+
+// Handler serves PITR workflow HTTP endpoints. Operations are executed by
+// sending commands to a connected agent over the commander; the server never
+// touches binlog files or MySQL credentials itself.
 type Handler struct {
 	opStore    OperationStore
 	agentStore agent.AgentStore
 	orgStore   org.OrgStore
 	auditStore audit.AuditStore
 	jwtSecret  []byte
+
+	// commander is the agent command channel used to route operation phases
+	// to the selected agent. May be nil in tests / minimal setups;
+	// operations are rejected when nil.
+	commander AgentCommander
 }
 
-// NewHandler creates a PITR Handler.
+// NewHandler creates a PITR Handler. commander may be nil for setups without
+// an agent channel.
 func NewHandler(
 	opStore OperationStore,
 	agentStore agent.AgentStore,
 	orgStore org.OrgStore,
 	auditStore audit.AuditStore,
 	jwtSecret []byte,
+	commander AgentCommander,
 ) *Handler {
-	return &Handler{
+	h := &Handler{
 		opStore:    opStore,
 		agentStore: agentStore,
 		orgStore:   orgStore,
 		auditStore: auditStore,
 		jwtSecret:  jwtSecret,
+		commander:  commander,
 	}
+	if commander != nil {
+		// Agent-pushed progress notifications update the operation's
+		// progress record, which the REST progress endpoint serves.
+		commander.SetProgressHandler(func(agentID string, cmd ws.Command) {
+			opID, _ := cmd.Params["operationId"].(string)
+			if opID == "" {
+				return
+			}
+			op, err := h.opStore.Get(opID)
+			if err != nil {
+				return
+			}
+			if op.State != StateExecuting {
+				return
+			}
+			p := op.Progress
+			if p == nil {
+				p = &ProgressInfo{}
+			}
+			if v, ok := cmd.Params["batchesComplete"].(float64); ok {
+				p.BatchesComplete = int(v)
+			}
+			if v, ok := cmd.Params["batchesTotal"].(float64); ok {
+				p.BatchesTotal = int(v)
+			}
+			if v, ok := cmd.Params["rowsRestored"].(float64); ok {
+				p.RowsRestored = int64(v)
+			}
+			if s, ok := cmd.Params["estimatedRemaining"].(string); ok {
+				p.EstimatedRemaining = s
+			}
+			op.Progress = p
+			_ = h.opStore.Update(op)
+		})
+	}
+	return h
 }
 
 // ---------- request / response types ----------
 
 type startRequest struct {
-	AgentID         string `json:"agent_id"`
-	TargetTable     string `json:"target_table"`
-	RecoveryTime    string `json:"recovery_time"`
-	Mode            string `json:"mode"` // "preview" or "execute"
-	MySQLDSN        string `json:"mysql_dsn"`
-	MySQLBinlogPath string `json:"mysqlbinlog_path,omitempty"`
+	AgentID      string   `json:"agent_id"`
+	TargetTable  string   `json:"target_table"`
+	RecoveryTime string   `json:"recovery_time"`
+	Mode         string   `json:"mode"` // "preview" or "execute"
+	BinlogFiles  []string `json:"binlog_files,omitempty"`
+	StartTime    string   `json:"start_time,omitempty"`
+	StartPos     *uint32  `json:"start_pos,omitempty"`
+	StopPos      *uint32  `json:"stop_pos,omitempty"`
 }
 
 type startResponse struct {
@@ -69,20 +120,21 @@ type startResponse struct {
 }
 
 type statusResponse struct {
-	ID           string          `json:"id"`
-	OrgID        string          `json:"orgId"`
-	AgentID      string          `json:"agentId"`
-	TargetTable  string          `json:"targetTable"`
-	RecoveryTime time.Time       `json:"recoveryTime"`
-	Mode         string          `json:"mode"`
-	State        OperationState  `json:"state"`
-	PreflightRes *PreflightResult `json:"preflightResult,omitempty"`
-	ParseRes     *ParseSummary   `json:"parseResult,omitempty"`
-	ExecRes      *ExecSummary    `json:"execResult,omitempty"`
-	Progress     *ProgressInfo   `json:"progress,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
+	ID             string           `json:"id"`
+	OrgID          string           `json:"orgId"`
+	AgentID        string           `json:"agentId"`
+	AgentConnected bool             `json:"agentConnected"`
+	TargetTable    string           `json:"targetTable"`
+	RecoveryTime   time.Time        `json:"recoveryTime"`
+	Mode           string           `json:"mode"`
+	State          OperationState   `json:"state"`
+	PreflightRes   *PreflightResult `json:"preflightResult,omitempty"`
+	ParseRes       *ParseSummary    `json:"parseResult,omitempty"`
+	ExecRes        *ExecSummary     `json:"execResult,omitempty"`
+	Progress       *ProgressInfo    `json:"progress,omitempty"`
+	Error          string           `json:"error,omitempty"`
+	CreatedAt      time.Time        `json:"createdAt"`
+	UpdatedAt      time.Time        `json:"updatedAt"`
 }
 
 type cancelResponse struct {
@@ -106,6 +158,38 @@ type progressResponse struct {
 	BatchesTotal       int            `json:"batchesTotal"`
 	RowsRestored       int64          `json:"rowsRestored"`
 	EstimatedRemaining string         `json:"estimatedRemaining"`
+}
+
+// Agent command result payloads (mirror the agent-side handlers).
+
+type agentPreflightResult struct {
+	Preflight   *connector.PreflightResult `json:"preflight"`
+	BinlogFiles []string                   `json:"binlogFiles"`
+	TotalSize   int64                      `json:"totalSize"`
+	BinlogDir   string                     `json:"binlogDir"`
+}
+
+type agentParseResult struct {
+	OperationID string            `json:"operationId"`
+	TotalRows   int64             `json:"totalRows"`
+	ReverseSql  []string          `json:"reverseSql"`
+	Preview     []ReverseSqlEntry `json:"preview"`
+	SQLSample   string            `json:"sqlSample"`
+}
+
+type agentBatchError struct {
+	BatchNum int    `json:"batchNum"`
+	SQL      string `json:"sql"`
+	Error    string `json:"error"`
+}
+
+type agentExecuteResult struct {
+	OperationID      string            `json:"operationId"`
+	Cancelled        bool              `json:"cancelled"`
+	RowsAffected     int64             `json:"rowsAffected"`
+	BatchesCompleted int               `json:"batchesCompleted"`
+	BatchesTotal     int               `json:"batchesTotal"`
+	Errors           []agentBatchError `json:"errors"`
 }
 
 // ---------- helpers ----------
@@ -134,6 +218,26 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// newCmdID generates a unique command identifier for hub correlation.
+func newCmdID(prefix string) string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return prefix + "-" + hex.EncodeToString(b)
+}
+
+// decodeResult round-trips a command response Result (map[string]interface{})
+// into a typed struct.
+func decodeResult(resp *ws.Response, out interface{}) error {
+	data, err := json.Marshal(resp.Result)
+	if err != nil {
+		return fmt.Errorf("marshal result: %w", err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("unmarshal result: %w", err)
+	}
+	return nil
 }
 
 // ---------- handlers ----------
@@ -189,6 +293,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
+		op.AgentConnected = h.agentConnected(op.AgentID)
 		filtered = append(filtered, op)
 	}
 	if filtered == nil {
@@ -198,9 +303,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"operations": filtered})
 }
 
-// Start initiates a new PITR recovery operation. The operation is created in
-// the preflight state and an asynchronous goroutine advances it through the
-// state machine. The response returns immediately with the operation ID.
+// Start initiates a new PITR recovery operation against a connected agent.
+// The operation is created in the preflight state and an asynchronous
+// goroutine advances it through the state machine by sending commands to the
+// agent over the hub.
 //
 // POST /api/pitr/start
 func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
@@ -216,9 +322,9 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.AgentID == "" || req.TargetTable == "" || req.RecoveryTime == "" || req.Mode == "" || req.MySQLDSN == "" {
+	if req.AgentID == "" || req.TargetTable == "" || req.RecoveryTime == "" || req.Mode == "" {
 		writeError(w, http.StatusBadRequest,
-			"agent_id, target_table, recovery_time, mode, and mysql_dsn are required")
+			"agent_id, target_table, recovery_time, and mode are required")
 		return
 	}
 	if req.Mode != "preview" && req.Mode != "execute" {
@@ -231,6 +337,17 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest,
 			"invalid recovery_time: expected ISO8601/RFC3339 format")
 		return
+	}
+
+	var startTime *time.Time
+	if req.StartTime != "" {
+		t, err := time.Parse(time.RFC3339, req.StartTime)
+		if err != nil {
+			writeError(w, http.StatusBadRequest,
+				"invalid start_time: expected ISO8601/RFC3339 format")
+			return
+		}
+		startTime = &t
 	}
 
 	// Fetch the agent to determine the organisation.
@@ -252,15 +369,28 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The agent must be approved and connected — operations run entirely
+	// through the agent's command channel.
+	if !agt.Approved {
+		writeError(w, http.StatusConflict, "agent is not approved")
+		return
+	}
+	if !h.agentConnected(req.AgentID) {
+		writeError(w, http.StatusConflict, "agent is offline — start it with `mysql-pitr-agent serve` first")
+		return
+	}
+
 	op := &Operation{
-		OrgID:           agt.OrgID,
-		AgentID:         req.AgentID,
-		TargetTable:     req.TargetTable,
-		RecoveryTime:    recoveryTime,
-		Mode:            req.Mode,
-		DSN:             req.MySQLDSN,
-		MySQLBinlogPath: req.MySQLBinlogPath,
-		State:           StatePreflight,
+		OrgID:        agt.OrgID,
+		AgentID:      req.AgentID,
+		TargetTable:  req.TargetTable,
+		RecoveryTime: recoveryTime,
+		Mode:         req.Mode,
+		BinlogFiles:  req.BinlogFiles,
+		StartTime:    startTime,
+		StartPos:     req.StartPos,
+		StopPos:      req.StopPos,
+		State:        StatePreflight,
 	}
 
 	if err := h.opStore.Create(op); err != nil {
@@ -268,8 +398,7 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Launch the asynchronous workflow simulation. In production this would
-	// be dispatched to a worker queue.
+	// Launch the asynchronous workflow that drives the agent.
 	go h.runOperation(op, operator)
 
 	writeJSON(w, http.StatusCreated, startResponse{
@@ -313,20 +442,21 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, statusResponse{
-		ID:           op.ID,
-		OrgID:        op.OrgID,
-		AgentID:      op.AgentID,
-		TargetTable:  op.TargetTable,
-		RecoveryTime: op.RecoveryTime,
-		Mode:         op.Mode,
-		State:        op.State,
-		PreflightRes: op.PreflightRes,
-		ParseRes:     op.ParseRes,
-		ExecRes:      op.ExecRes,
-		Progress:     op.Progress,
-		Error:        op.Error,
-		CreatedAt:    op.CreatedAt,
-		UpdatedAt:    op.UpdatedAt,
+		ID:             op.ID,
+		OrgID:          op.OrgID,
+		AgentID:        op.AgentID,
+		AgentConnected: h.agentConnected(op.AgentID),
+		TargetTable:    op.TargetTable,
+		RecoveryTime:   op.RecoveryTime,
+		Mode:           op.Mode,
+		State:          op.State,
+		PreflightRes:   op.PreflightRes,
+		ParseRes:       op.ParseRes,
+		ExecRes:        op.ExecRes,
+		Progress:       op.Progress,
+		Error:          op.Error,
+		CreatedAt:      op.CreatedAt,
+		UpdatedAt:      op.UpdatedAt,
 	})
 }
 
@@ -375,6 +505,21 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	if err := h.opStore.Update(op); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Best-effort notification to the agent so in-flight work stops between
+	// batches. The runOperation goroutine observes the cancelled state when
+	// the command response arrives.
+	if h.commander != nil {
+		cCtx, cCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _ = h.commander.SendToAgent(cCtx, op.AgentID, ws.Command{
+			Cmd:  newCmdID("cancel"),
+			Type: ws.CmdPITRCancel,
+			Params: map[string]interface{}{
+				"operationId": op.ID,
+			},
+		})
+		cCancel()
 	}
 
 	// Record audit entry.
@@ -499,218 +644,13 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// findMySQLBinlog locates the mysqlbinlog binary. If mysqlbinlogPath is
-// non-empty it is validated and returned directly. Otherwise the function
-// checks PATH, MySQL basedir, and common installation paths.
-func findMySQLBinlog(mysqlbinlogPath string, ctx context.Context, conn *connector.MySQLConnector) (string, error) {
-	// 0. Explicit path from user config — use it directly.
-	if mysqlbinlogPath != "" {
-		if fi, err := os.Stat(mysqlbinlogPath); err == nil && fi.Mode().IsRegular() {
-			abs, _ := filepath.Abs(mysqlbinlogPath)
-			return abs, nil
-		}
-		return "", fmt.Errorf("specified mysqlbinlog path %q does not exist", mysqlbinlogPath)
-	}
-
-	// 1. Try PATH first (supports both mysqlbinlog and mariadb-binlog).
-	for _, name := range []string{"mysqlbinlog", "mariadb-binlog"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path, nil
-		}
-	}
-
-	// 2. Try MySQL basedir (SHOW VARIABLES LIKE 'basedir').
-	basedir, err := conn.GetBasedir(ctx)
-	if err == nil && basedir != "" {
-		for _, name := range []string{"mysqlbinlog", "mysqlbinlog.exe", "mariadb-binlog"} {
-			candidate := filepath.Join(basedir, "bin", name)
-			if fi, statErr := os.Stat(candidate); statErr == nil && fi.Mode().IsRegular() {
-				abs, _ := filepath.Abs(candidate)
-				return abs, nil
-			}
-		}
-	}
-
-	// 3. Common installation paths.
-	commonPaths := []string{
-		"/usr/bin/mysqlbinlog",
-		"/usr/bin/mariadb-binlog",
-		"/usr/local/mysql/bin/mysqlbinlog",
-		"/opt/homebrew/bin/mysqlbinlog",
-		"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqlbinlog.exe",
-		"C:\\Program Files\\MySQL\\MySQL Server 8.4\\bin\\mysqlbinlog.exe",
-		"C:\\Program Files\\MySQL\\MySQL Server 9.0\\bin\\mysqlbinlog.exe",
-	}
-	for _, p := range commonPaths {
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-			abs, _ := filepath.Abs(p)
-			return abs, nil
-		}
-	}
-
-	return "", fmt.Errorf("mysqlbinlog not found; install mysql-client or specify the path in the mysqlbinlog_path field")
-}
-
-// parseBinlogRemote uses mysqlbinlog --read-from-remote-server to parse binlog
-// files from a remote MySQL server. This is the fallback when binlog files are
-// not accessible on the local filesystem.
-func (h *Handler) parseBinlogRemote(mysqlbinlogPath string, cfg connector.ConnConfig, binlogNames []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
-	parts := strings.SplitN(targetTable, ".", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", targetTable)
-	}
-	recoveryStr := recoveryTime.Format("2006-01-02 15:04:05")
-	args := []string{
-		"--no-defaults",
-		"--base64-output=DECODE-ROWS",
-		"--verbose",
-		"--stop-datetime=" + recoveryStr,
-		"--read-from-remote-server",
-		"--host=" + cfg.Host,
-		"--port=" + strconv.Itoa(cfg.Port),
-		"--user=" + cfg.User,
-		"--password=" + cfg.Password,
-		"--protocol=TCP",
-	}
-	args = append(args, binlogNames...)
-
-	cmd := exec.Command(mysqlbinlogPath, args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("mysqlbinlog pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("mysqlbinlog stderr: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("mysqlbinlog start: %w", err)
-	}
-	
-	go func() {
-		s := bufio.NewScanner(stderr)
-		for s.Scan() {
-			if t := s.Text(); t != "" {
-				log.Printf("pitr: mysqlbinlog: %s", t)
-			}
-		}
-	}()
-	
-	tablePattern := "`" + parts[0] + "`.`" + parts[1] + "`"
-	var events []connector.RowEvent
-	var evType connector.EventType
-	var values []interface{}
-	inRow := false
-	
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "### DELETE FROM "+tablePattern) {
-			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
-			}
-			evType = connector.DeleteEvent
-			values = nil
-			inRow = true
-			continue
-		}
-		if strings.Contains(line, "### INSERT INTO "+tablePattern) {
-			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
-			}
-			evType = connector.InsertEvent
-			values = nil
-			inRow = true
-			continue
-		}
-		if strings.Contains(line, "### UPDATE "+tablePattern) {
-			if inRow {
-				events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
-			}
-			evType = connector.UpdateEvent
-			values = nil
-			inRow = true
-			continue
-		}
-		if inRow && strings.HasPrefix(line, "###   @") {
-			eq := strings.IndexByte(line, '=')
-			if eq > 0 {
-				val := parseColumnValue(line[eq+1:])
-				values = append(values, val)
-			}
-		}
-		if inRow && !strings.HasPrefix(line, "###") {
-			events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
-			values = nil
-			inRow = false
-		}
-	}
-	if inRow && len(values) > 0 {
-		events = append(events, makeRowEvent(evType, parts[0], parts[1], values))
-	}
-	_ = cmd.Wait()
-	log.Printf("pitr: mysqlbinlog remote parsed %d row event(s) for %s", len(events), targetTable)
-	return &connector.ParseResult{Events: events, TotalRows: int64(len(events))}, nil
-}
-
-// makeRowEvent constructs a RowEvent from mysqlbinlog parsed column values.
-func makeRowEvent(typ connector.EventType, db, table string, vals []interface{}) connector.RowEvent {
-	ev := connector.RowEvent{Type: typ, Database: db, Table: table}
-	switch typ {
-	case connector.DeleteEvent:
-		m := make(map[string]interface{}, len(vals))
-		for i, v := range vals {
-			m[fmt.Sprintf("col_%d", i)] = v
-		}
-		ev.Before = m
-	case connector.InsertEvent:
-		m := make(map[string]interface{}, len(vals))
-		for i, v := range vals {
-			m[fmt.Sprintf("col_%d", i)] = v
-		}
-		ev.After = m
-	case connector.UpdateEvent:
-		if len(vals)%2 == 0 {
-			half := len(vals) / 2
-			before := make(map[string]interface{}, half)
-			after := make(map[string]interface{}, half)
-			for i := 0; i < half; i++ {
-				before[fmt.Sprintf("col_%d", i)] = vals[i]
-				after[fmt.Sprintf("col_%d", i)] = vals[half+i]
-			}
-			ev.Before = before
-			ev.After = after
-		}
-	}
-	return ev
-}
-
-// parseColumnValue parses a column value from mysqlbinlog text output.
-func parseColumnValue(s string) interface{} {
-	s = strings.TrimSpace(s)
-	if s == "NULL" || s == "'NULL'" {
-		return nil
-	}
-	if strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'") {
-		return strings.Trim(s, "'")
-	}
-	var i int64
-	if _, err := fmt.Sscanf(s, "%d", &i); err == nil {
-		if strings.Contains(s, ".") {
-			var f float64
-			fmt.Sscanf(s, "%f", &f)
-			return f
-		}
-		return i
-	}
-	var f float64
-	if _, err := fmt.Sscanf(s, "%f", &f); err == nil {
-		return f
-	}
-	return s
-}
-
 // ---------- background operation execution ----------
+
+// agentConnected reports whether the operation's agent currently has a live
+// hub connection.
+func (h *Handler) agentConnected(agentID string) bool {
+	return h.commander != nil && h.commander.IsConnected(agentID)
+}
 
 // failOperation transitions the operation to the failed state with the given
 // error message and persists the change.
@@ -721,9 +661,9 @@ func (h *Handler) failOperation(op *Operation, format string, args ...interface{
 	log.Printf("pitr: operation %s failed: %s", op.ID, op.Error)
 }
 
-// runOperation advances the operation through the state machine using real
-// MySQL connections, binlog parsing, and SQL execution. It replaces the
-// previous simulateOperation which used hardcoded fake data.
+// runOperation advances the operation through the state machine by sending
+// commands to the selected agent over the hub: preflight, pitr_parse, and
+// pitr_execute. The server never accesses binlog files or MySQL directly.
 func (h *Handler) runOperation(op *Operation, operator string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -731,20 +671,10 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		}
 	}()
 
-	// ---- Parse DSN ----
-	connCfg, err := config.ParseDSNToConnConfig(op.DSN)
-	if err != nil {
-		h.failOperation(op, "invalid MySQL DSN: %v", err)
+	if !h.agentConnected(op.AgentID) {
+		h.failOperation(op, "agent %s is not connected (agent_offline)", op.AgentID)
 		return
 	}
-
-	// ---- Connect ----
-	conn := connector.NewMySQLConnector()
-	if err := conn.Connect(connCfg); err != nil {
-		h.failOperation(op, "connect to MySQL failed: %v", err)
-		return
-	}
-	defer conn.Close()
 
 	ctx := context.Background()
 
@@ -752,40 +682,35 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 	// Phase 1: preflight -> confirmed
 	// ================================================================
 	pCtx, pCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer pCancel()
-
-	pfRes, err := conn.Preflight(pCtx)
-	if err != nil {
-		h.failOperation(op, "preflight error: %v", err)
-		return
-	}
-	if pfRes.Status == connector.PreflightFail {
-		h.failOperation(op, "preflight checks failed")
-		return
-	}
-
-	binlogs, err := conn.GetBinlogFiles(pCtx)
-	if err != nil {
-		h.failOperation(op, "list binlog files: %v", err)
-		return
-	}
-	binlogNames := make([]string, len(binlogs))
-	var totalSize int64
-	for i, bf := range binlogs {
-		binlogNames[i] = bf.Name
-		totalSize += bf.Size
-	}
-
-	binlogDir, err := conn.GetBinlogDir(pCtx)
-	if err != nil {
-		h.failOperation(op, "resolve binlog directory: %v", err)
-		return
-	}
+	resp, err := h.commander.SendToAgent(pCtx, op.AgentID, ws.Command{
+		Cmd:  newCmdID("preflight"),
+		Type: ws.CmdPreflight,
+		Params: map[string]interface{}{
+			"operationId": op.ID,
+		},
+	})
 	pCancel()
+	if err != nil {
+		h.failOperation(op, "preflight via agent: %v", err)
+		return
+	}
+	if resp.Status == ws.StatusError {
+		h.failOperation(op, "preflight failed: %s", resp.Error)
+		return
+	}
 
-	paths := make([]string, 0, len(binlogNames))
-	for _, name := range binlogNames {
-		paths = append(paths, filepath.Join(binlogDir, name))
+	var pf agentPreflightResult
+	if err := decodeResult(resp, &pf); err != nil {
+		h.failOperation(op, "decode preflight result: %v", err)
+		return
+	}
+	if pf.Preflight == nil {
+		h.failOperation(op, "preflight result missing preflight data")
+		return
+	}
+	if pf.Preflight.Status == connector.PreflightFail {
+		h.failOperation(op, "preflight checks failed (MySQL %s)", pf.Preflight.Version)
+		return
 	}
 
 	if !h.tryTransition(op, StateConfirmed) {
@@ -793,9 +718,9 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 	}
 	op.PreflightRes = &PreflightResult{
 		CheckedAt:     time.Now(),
-		BinlogFiles:   binlogNames,
+		BinlogFiles:   pf.BinlogFiles,
 		EarliestTime:  time.Time{},
-		EstimatedSize: totalSize,
+		EstimatedSize: pf.TotalSize,
 	}
 	_ = h.opStore.Update(op)
 
@@ -806,65 +731,49 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		return
 	}
 
-	var parseRes *connector.ParseResult
-
-	// Check if binlog files are accessible locally; if not, try mysqlbinlog remote.
-	if len(paths) > 0 {
-		if _, statErr := os.Stat(paths[0]); os.IsNotExist(statErr) {
-			log.Printf("pitr: binlog files not accessible locally, trying mysqlbinlog remote for op %s", op.ID)
-			mysqlbinlogPath, findErr := findMySQLBinlog(op.MySQLBinlogPath, ctx, conn)
-			if findErr != nil {
-				h.failOperation(op, "parse binlogs (remote): %v", findErr)
-				return
-			}
-			parseRes, err = h.parseBinlogRemote(mysqlbinlogPath, connCfg, binlogNames, op.TargetTable, op.RecoveryTime)
-			if err != nil {
-				h.failOperation(op, "parse binlogs (remote): %v", err)
-				return
-			}
-		}
+	parseParams := map[string]interface{}{
+		"operationId": op.ID,
+		"targetTable": op.TargetTable,
+		"endTime":     op.RecoveryTime.Format(time.RFC3339),
+	}
+	if len(op.BinlogFiles) > 0 {
+		parseParams["binlogFiles"] = op.BinlogFiles
+	}
+	if op.StartTime != nil {
+		parseParams["startTime"] = op.StartTime.Format(time.RFC3339)
+	}
+	if op.StartPos != nil {
+		parseParams["startPos"] = *op.StartPos
+	}
+	if op.StopPos != nil {
+		parseParams["stopPos"] = *op.StopPos
 	}
 
-	// Fall back to local native parser if remote was not attempted or not needed.
-	if parseRes == nil {
-		bp := parser.NewBinlogParser()
-		bp.SetSkipChecksum(true)
-		parseRes, err = bp.ParseFiles(paths, parser.ParseOptions{
-			EndTime:     op.RecoveryTime,
-			TargetTable: op.TargetTable,
-		})
-		if err != nil {
-			h.failOperation(op, "parse binlogs: %v", err)
-			return
-		}
-	}
-
-	reverseSqls, err := parser.ReverseSQLBatch(parseRes.Events, nil)
+	parseCtx, parseCancel := context.WithTimeout(ctx, 30*time.Minute)
+	resp, err = h.commander.SendToAgent(parseCtx, op.AgentID, ws.Command{
+		Cmd:    newCmdID("parse"),
+		Type:   ws.CmdPITRParse,
+		Params: parseParams,
+	})
+	parseCancel()
 	if err != nil {
-		h.failOperation(op, "generate reverse SQL: %v", err)
+		h.failOperation(op, "parse via agent: %v", err)
+		return
+	}
+	if resp.Status == ws.StatusError {
+		h.failOperation(op, "parse failed: %s", resp.Error)
 		return
 	}
 
-	maxEntries := len(reverseSqls)
-	if maxEntries > 1000 {
-		maxEntries = 1000
+	var parseRes agentParseResult
+	if err := decodeResult(resp, &parseRes); err != nil {
+		h.failOperation(op, "decode parse result: %v", err)
+		return
 	}
-	reverseEntries := make([]ReverseSqlEntry, 0, maxEntries)
-	for i := 0; i < maxEntries; i++ {
-		ev := parseRes.Events[i]
-		reverseEntries = append(reverseEntries, ReverseSqlEntry{
-			Sequence:     i + 1,
-			SqlType:      string(ev.Type),
-			TableName:    ev.Table,
-			OriginalSql:  "",
-			ReverseSql:   reverseSqls[i],
-			RowsAffected: 1,
-		})
-	}
-
-	sqlSample := ""
-	if len(reverseSqls) > 0 {
-		sqlSample = reverseSqls[0]
+	if parseRes.TotalRows == 0 {
+		h.failOperation(op, "no row events found for table %q before %s",
+			op.TargetTable, op.RecoveryTime.Format(time.RFC3339))
+		return
 	}
 
 	if !h.tryTransition(op, StatePreviewed) {
@@ -872,9 +781,9 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 	}
 	op.ParseRes = &ParseSummary{
 		ParsedAt:     time.Now(),
-		RowsAffected: int64(len(reverseSqls)),
-		SQLSample:    sqlSample,
-		ReverseSql:   reverseEntries,
+		RowsAffected: parseRes.TotalRows,
+		SQLSample:    parseRes.SQLSample,
+		ReverseSql:   parseRes.Preview,
 	}
 	_ = h.opStore.Update(op)
 
@@ -892,60 +801,64 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		return
 	}
 
-	batchSize := 100
-	totalBatches := int(math.Ceil(float64(len(reverseSqls)) / float64(batchSize)))
-	if totalBatches < 1 {
-		totalBatches = 1
-	}
-
 	op.Progress = &ProgressInfo{
-		BatchesTotal:      totalBatches,
+		BatchesTotal:      0,
 		BatchesComplete:   0,
 		RowsRestored:      0,
 		EstimatedRemaining: "calculating...",
 	}
 	_ = h.opStore.Update(op)
 
-	var totalRows int64
-	execStart := time.Now()
+	// Long-running; bounded by agent disconnect detection on the hub (the
+	// pending command channel is drained when the agent drops).
+	resp, err = h.commander.SendToAgent(ctx, op.AgentID, ws.Command{
+		Cmd:  newCmdID("execute"),
+		Type: ws.CmdPITRExecute,
+		Params: map[string]interface{}{
+			"operationId":  op.ID,
+			"sql":          parseRes.ReverseSql,
+			"batchSize":    100,
+			"targetTable":  op.TargetTable,
+			"recoveryTime": op.RecoveryTime.Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		h.failOperation(op, "execute via agent: %v", err)
+		return
+	}
+	if resp.Status == ws.StatusError {
+		h.failOperation(op, "execute failed: %s", resp.Error)
+		return
+	}
 
-	for i := 0; i < len(reverseSqls); i += batchSize {
-		end := i + batchSize
-		if end > len(reverseSqls) {
-			end = len(reverseSqls)
-		}
-		batch := reverseSqls[i:end]
+	var execRes agentExecuteResult
+	if err := decodeResult(resp, &execRes); err != nil {
+		h.failOperation(op, "decode execute result: %v", err)
+		return
+	}
 
-		_, err := conn.ExecuteRollback(ctx, batch, connector.ExecOptions{
-			BatchSize: len(batch),
-		})
-		if err != nil {
-			h.failOperation(op, "execution error at batch %d: %v",
-				op.Progress.BatchesComplete, err)
-			return
-		}
-
-		totalRows += int64(len(batch))
-		op.Progress.BatchesComplete++
-		op.Progress.RowsRestored = totalRows
-
-		elapsed := time.Since(execStart)
-		if op.Progress.BatchesComplete > 0 {
-			perBatch := elapsed / time.Duration(op.Progress.BatchesComplete)
-			remaining := perBatch * time.Duration(totalBatches-op.Progress.BatchesComplete)
-			op.Progress.EstimatedRemaining = remaining.Round(time.Second).String()
-		}
+	if op.State == StateCancelled || execRes.Cancelled {
+		op.State = StateCancelled
 		_ = h.opStore.Update(op)
+		return
+	}
+
+	if len(execRes.Errors) > 0 {
+		h.failOperation(op, "execution errors: %v", execRes.Errors)
+		return
 	}
 
 	op.State = StateCompleted
 	op.ExecRes = &ExecSummary{
 		ExecutedAt:   time.Now(),
-		RowsRestored: totalRows,
-		Duration:     time.Since(execStart).Round(time.Second).String(),
+		RowsRestored: execRes.RowsAffected,
+		Duration:     "",
 	}
-	op.Progress.BatchesComplete = totalBatches
-	op.Progress.EstimatedRemaining = "0s"
+	if op.Progress != nil {
+		op.Progress.BatchesComplete = execRes.BatchesCompleted
+		op.Progress.BatchesTotal = execRes.BatchesTotal
+		op.Progress.EstimatedRemaining = "0s"
+	}
 	_ = h.opStore.Update(op)
 
 	h.recordAudit(op, operator, "completed", "")

@@ -104,9 +104,14 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	}
 
 	// Resolve binlog directory and build file paths.
-	dataDir, err := resolveDataDir(connCfg)
-	if err != nil {
-		return fmt.Errorf("flashback: resolve binlog directory: %w", err)
+	dataDir, err := conn.GetBinlogDir(ctx)
+	if err != nil || dataDir == "" {
+		// Fall back to a fresh discovery connection (e.g. when the injected
+		// connector cannot resolve the directory).
+		dataDir, err = resolveDataDir(connCfg)
+		if err != nil {
+			return fmt.Errorf("flashback: resolve binlog directory: %w", err)
+		}
 	}
 	log.Printf("MySQL data directory: %s", dataDir)
 
@@ -116,7 +121,10 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	}
 
 	// ---- Parse binlogs via mysqlbinlog ----
-	parseRes, err := parseBinlogWithMySQLBinlog(connCfg, paths, opts.TargetTable, recoveryTime)
+	parseRes, err := mysqlbinlogParse(connCfg, paths, binlogParseOpts{
+		TargetTable: opts.TargetTable,
+		EndTime:     &recoveryTime,
+	})
 	if err != nil {
 		return fmt.Errorf("flashback: parse binlogs: %w", err)
 	}
@@ -232,12 +240,27 @@ func resolveDataDir(cfg connector.ConnConfig) (string, error) {
 	return value, nil
 }
 
+// mysqlbinlogParse is the parse entry point used by RunFlashback. It is a
+// package-level variable so tests can substitute a fake.
+var mysqlbinlogParse = parseBinlogWithMySQLBinlog
+
+// binlogParseOpts controls how a binlog parse is constrained. All fields are
+// optional; a nil/zero field means "no constraint".
+type binlogParseOpts struct {
+	TargetTable     string
+	StartTime       *time.Time
+	EndTime         *time.Time
+	StartPos        uint32
+	StopPos         uint32
+	MySQLBinlogPath string
+}
+
 // parseBinlogWithMySQLBinlog uses the mysqlbinlog tool to parse binlog files
 // and generate reverse SQL statements.
-func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, targetTable string, recoveryTime time.Time) (*connector.ParseResult, error) {
-	parts := strings.SplitN(targetTable, ".", 2)
+func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, opts binlogParseOpts) (*connector.ParseResult, error) {
+	parts := strings.SplitN(opts.TargetTable, ".", 2)
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", targetTable)
+		return nil, fmt.Errorf("invalid target table %q: expected schema.table format", opts.TargetTable)
 	}
 
 	// Query real column names from MySQL.
@@ -247,16 +270,30 @@ func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, target
 	}
 
 	// Build mysqlbinlog args.
-	recoveryStr := recoveryTime.Format("2006-01-02 15:04:05")
 	args := []string{
 		"--no-defaults",
 		"--base64-output=DECODE-ROWS",
 		"--verbose",
-		"--stop-datetime=" + recoveryStr,
+	}
+	if opts.StartTime != nil {
+		args = append(args, "--start-datetime="+opts.StartTime.Format("2006-01-02 15:04:05"))
+	}
+	if opts.EndTime != nil {
+		args = append(args, "--stop-datetime="+opts.EndTime.Format("2006-01-02 15:04:05"))
+	}
+	if opts.StartPos > 0 {
+		args = append(args, fmt.Sprintf("--start-position=%d", opts.StartPos))
+	}
+	if opts.StopPos > 0 {
+		args = append(args, fmt.Sprintf("--stop-position=%d", opts.StopPos))
 	}
 	args = append(args, paths...)
 
-	cmd := exec.Command("mysqlbinlog", args...)
+	binlogBinary := opts.MySQLBinlogPath
+	if binlogBinary == "" {
+		binlogBinary = "mysqlbinlog"
+	}
+	cmd := exec.Command(binlogBinary, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("mysqlbinlog pipe: %w", err)
@@ -336,7 +373,7 @@ func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, target
 	}
 	cmd.Wait()
 
-	log.Printf("mysqlbinlog parsed %d row event(s) for %s", len(events), targetTable)
+	log.Printf("mysqlbinlog parsed %d row event(s) for %s", len(events), opts.TargetTable)
 	return &connector.ParseResult{Events: events, TotalRows: int64(len(events))}, nil
 }
 

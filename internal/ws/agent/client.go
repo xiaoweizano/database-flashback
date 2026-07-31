@@ -170,6 +170,40 @@ func (c *Client) SendCommand(ctx context.Context, cmd ws.Command) (*ws.Response,
 	}
 }
 
+// Send writes a message to the server without waiting for a response. It is
+// used for one-way notifications such as pitr_progress pushes. Returns an
+// error if the client is not connected.
+func (c *Client) Send(cmd ws.Command) error {
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("ws client: marshal command: %w", err)
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	conn := c.getConn()
+	if conn == nil {
+		return fmt.Errorf("ws client: not connected")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return fmt.Errorf("ws client: set write deadline: %w", err)
+	}
+	if err := conn.WriteMessage(gorilla.TextMessage, data); err != nil {
+		return fmt.Errorf("ws client: write: %w", err)
+	}
+	return nil
+}
+
+// TLSConfig returns the mTLS configuration used for outbound connections. It
+// is populated after Connect is called and can be used for certificate
+// auto-renewal.
+func (c *Client) TLSConfig() *tls.Config {
+	if c.dialer == nil {
+		return nil
+	}
+	return c.dialer.TLSClientConfig
+}
+
 // Close gracefully shuts down the client, cancels all pending commands, and
 // closes the WebSocket connection. Safe to call multiple times.
 func (c *Client) Close() error {

@@ -72,10 +72,15 @@ export default function PITRListPage() {
       title: t('pitr.agentId'),
       dataIndex: 'agentId',
       key: 'agentId',
-      width: 120,
+      width: 150,
       ellipsis: true,
-      render: (id: string) => (
-        <Text code style={{ fontSize: 11 }}>{id.substring(0, 8)}...</Text>
+      render: (id: string, record: PITROperation) => (
+        <Space size={4}>
+          <Text code style={{ fontSize: 11 }}>{id.substring(0, 8)}...</Text>
+          {record.agentConnected
+            ? <Tag color="green" style={{ marginInlineEnd: 0 }}>{t('pitr.connected')}</Tag>
+            : <Tag color="default" style={{ marginInlineEnd: 0 }}>{t('pitr.offline')}</Tag>}
+        </Space>
       ),
     },
     {

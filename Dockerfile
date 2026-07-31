@@ -43,7 +43,11 @@ RUN npm run build
 # =============================================================================
 FROM alpine:3.20 AS agent
 
-RUN apk add --no-cache ca-certificates tzdata
+# mariadb-client provides mysqlbinlog (symlinked for name compatibility),
+# which the agent uses to parse local binlog files.
+RUN apk add --no-cache ca-certificates tzdata mariadb-client mariadb-server-utils && \
+    ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
+    test -x /usr/bin/mysqlbinlog
 
 COPY --from=builder /build/mysql-pitr-agent /usr/local/bin/mysql-pitr-agent
 
@@ -54,14 +58,14 @@ ENTRYPOINT ["mysql-pitr-agent"]
 # =============================================================================
 FROM alpine:3.20 AS server
 
-RUN apk add --no-cache ca-certificates tzdata mariadb-client && \
-    ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
-    test -x /usr/bin/mysqlbinlog
+# The server no longer parses binlogs itself — the agent does — so no
+# mysql/mariadb client is needed.
+RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /build/mysql-pitr-server /usr/local/bin/mysql-pitr-server
 
 COPY --from=frontend /web/dist /usr/share/mysql-pitr/web/
 
-EXPOSE 8080
+EXPOSE 8080 9443
 
 ENTRYPOINT ["mysql-pitr-server"]

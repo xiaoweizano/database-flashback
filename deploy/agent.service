@@ -6,10 +6,14 @@ Wants=mysql.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/mysql-pitr-agent flashback --config=/etc/agent/config.json
+# Daemon mode: serves binlog data to the mysql-pitr-server over mTLS.
+# AGENT_PASSPHRASE decrypts /etc/agent/config.json; set it in /etc/agent/env.
+ExecStart=/usr/local/bin/mysql-pitr-agent serve --config=/etc/agent/config.json --passphrase=${AGENT_PASSPHRASE}
 Restart=always
 RestartSec=5
 EnvironmentFile=-/etc/agent/env
+Environment=AGENT_PASSPHRASE=
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 StandardOutput=journal
 StandardError=journal
 LimitNOFILE=65536

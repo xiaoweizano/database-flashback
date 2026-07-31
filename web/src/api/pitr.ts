@@ -6,8 +6,10 @@ export async function startPITR(data: {
   target_table: string;
   recovery_time: string;
   mode: 'preview' | 'execute';
-  mysql_dsn: string;
-  mysqlbinlog_path?: string;
+  binlog_files?: string[];
+  start_time?: string;
+  start_pos?: number;
+  stop_pos?: number;
 }): Promise<{ operationId: string; status: string }> {
   const response = await apiClient.post<{ operationId: string; status: string }>('/pitr/start', data);
   return response.data;

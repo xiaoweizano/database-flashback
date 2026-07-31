@@ -10,6 +10,8 @@ const (
 	CmdStatus       = "status"
 	CmdShutdown     = "shutdown"
 	CmdCertRenewal  = "cert_renewal"
+	CmdPITRProgress = "pitr_progress"
+	CmdPITRCancel   = "pitr_cancel"
 )
 
 // Response status constants.

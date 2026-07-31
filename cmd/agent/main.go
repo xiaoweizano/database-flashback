@@ -23,11 +23,15 @@ before a specified recovery time.
 
 Sub-commands:
   flashback    Perform offline binlog flashback (local-only, no WebSocket)
+  serve        Run as a persistent daemon serving the mysql-pitr-server
+  config       Encrypt the agent config file
 `,
 		SilenceUsage: true,
 	}
 
 	cmd.AddCommand(NewFlashbackCommand())
+	cmd.AddCommand(NewServeCommand())
+	cmd.AddCommand(NewConfigCommand())
 
 	return cmd
 }

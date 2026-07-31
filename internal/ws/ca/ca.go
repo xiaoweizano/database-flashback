@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"sync"
 	"time"
 )
@@ -258,6 +259,72 @@ func (ca *CA) IsRevoked(serial string) bool {
 	ca.revoked[serial] = stored
 	ca.revokedMu.Unlock()
 	return stored
+}
+
+// SignServerCert generates a fresh ECDSA key and a server certificate signed
+// by the CA root, valid for CertValidity. Hosts are added to the certificate's
+// SANs: strings that parse as IP addresses become IP SANs, everything else a
+// DNS SAN.
+func (ca *CA) SignServerCert(hosts []string) (*tls.Certificate, error) {
+	if ca.rootCert == nil || ca.rootKey == nil {
+		return nil, fmt.Errorf("ca: root not initialised; call GenerateRoot first")
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("ca: generate server key: %w", err)
+	}
+
+	ca.serialMu.Lock()
+	ca.serial++
+	serial := big.NewInt(ca.serial)
+	ca.serialMu.Unlock()
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "mysql-pitr-server",
+			Organization: []string{"MySQL PITR Platform"},
+		},
+		NotBefore: now.Add(-1 * time.Hour),
+		NotAfter:  now.Add(CertValidity),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+	}
+
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
+		if ip := net.ParseIP(h); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, h)
+		}
+	}
+	if len(template.DNSNames) == 0 && len(template.IPAddresses) == 0 {
+		template.DNSNames = []string{"localhost"}
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, ca.rootCert, &key.PublicKey, ca.rootKey)
+	if err != nil {
+		return nil, fmt.Errorf("ca: sign server cert: %w", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("ca: marshal server key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	cert, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("ca: load server keypair: %w", err)
+	}
+	return &cert, nil
 }
 
 // ServerTLSConfig returns a *tls.Config configured for mTLS with
