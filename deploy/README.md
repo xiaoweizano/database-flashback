@@ -45,24 +45,70 @@ agent, issues its mTLS certificate from the server's internal CA, and writes
 the encrypted agent config — so `docker compose up` brings up a working
 agent-connected stack end to end.
 
+> **Using MySQL on the host?** The stack is configured for a host MySQL out
+> of the box — no MySQL container is started. See
+> [Host MySQL setup](#host-mysql-setup) below.
+
 ```bash
 git clone https://github.com/a-shan/mysql-pitr.git
 cd mysql-pitr
 
-# Start all services (provision runs once, then the agent connects)
+# 1. Configure the host MySQL connection (see .env.example)
+cp .env.example .env
+#    edit .env: MYSQL_PASSWORD, MYSQL_BINLOG_DIR_HOST, ...
+
+# 2. Start all services (provision runs once, then the agent connects)
 docker compose up -d
 
-# Watch the agent come online
+# 3. Watch the agent come online
 docker compose logs -f agent
 ```
 
 This starts:
 
-- **mysql** — MySQL 8.0 with binary logging enabled (required for PITR)
 - **provision** — one-shot: CA extraction, agent registration, cert issuance
-- **agent** — `mysql-pitr-agent serve`, connected to the server hub
+- **agent** — `mysql-pitr-agent serve`, connected to the server hub; reads
+  the **host** MySQL's binlog directory (mounted read-only)
 - **server** — web dashboard + API (`localhost:8080`) and the mTLS agent
   endpoint (`localhost:9443`)
+
+### Host MySQL setup
+
+The agent connects to MySQL on the host via `host.docker.internal` and reads
+the host's binlog files from a mounted directory. Prepare the host MySQL once:
+
+1. **Enable ROW binlog** — in `my.ini` under `[mysqld]`:
+
+   ```ini
+   log-bin=mysql-bin
+   binlog-format=ROW
+   binlog-row-image=FULL
+   ```
+
+   then restart the MySQL service. Windows example path for the data
+   directory: `C:\ProgramData\MySQL\MySQL Server 8.0\Data` (where the
+   `mysql-bin.*` files live).
+
+2. **Create a dedicated account** for the agent (containers connect from the
+   Docker bridge network, so `root@localhost` won't work):
+
+   ```sql
+   CREATE USER 'pitr'@'%' IDENTIFIED BY 'change-me';
+   GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pitr'@'%';
+   GRANT SELECT ON `mydb`.* TO 'pitr'@'%';
+   ```
+
+3. **Fill in `.env`** (copy from `.env.example`):
+
+   | Variable | Description |
+   |---|---|
+   | `MYSQL_HOST` | `host.docker.internal` (Docker Desktop built-in) |
+   | `MYSQL_USER` / `MYSQL_PASSWORD` | the account above |
+   | `MYSQL_BINLOG_DIR_HOST` | host MySQL data dir, e.g. `C:/ProgramData/MySQL/MySQL Server 8.0/Data` |
+   | `PITR_PASSPHRASE` | passphrase for the encrypted agent config |
+
+   Linux note: if `host.docker.internal` does not resolve, use the host's LAN
+   IP in `MYSQL_HOST` and grant the account to `'pitr'@'%'`.
 
 ---
 
@@ -176,11 +222,13 @@ target schema, `REPLICATION SLAVE`, `REPLICATION CLIENT`).
 
 ### Production docker-compose.yml
 
-Use the included `docker-compose.yml` as a starting point. For production:
+Use the included `docker-compose.yml` as a starting point (host MySQL — see
+[Host MySQL setup](#host-mysql-setup)). For production:
 
-1. **Change default passwords** — override `MYSQL_ROOT_PASSWORD` and the
-   provision/agent config values
-2. **Persist MySQL data** — named volumes are already mounted; keep them
+1. **Change default passwords** — set `MYSQL_PASSWORD` and `PITR_PASSPHRASE`
+   in `.env`; use a dedicated MySQL account instead of root
+2. **Persist volumes** — `server-data` (CA material) and `agent-data`
+   (checkpoints) are named volumes; keep them
 3. **Place the web server behind a reverse proxy** (nginx, Caddy, Traefik)
    with TLS; the agent endpoint (`:9443`) already speaks TLS with its own
    internal CA

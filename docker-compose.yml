@@ -1,34 +1,29 @@
 version: '3.8'
 
-services:
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: pitr_test
-      MYSQL_DATABASE: pitr_test
-    command: --binlog-format=ROW --binlog-row-image=FULL --log-bin=mysql-bin
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    networks:
-      - pitr-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# 使用宿主机 MySQL（不在 Docker 内另起 mysql 容器）。
+# 连接信息与 binlog 目录通过 .env 配置（参考 .env.example）：
+#   - agent / provision 通过 host.docker.internal 访问宿主机 MySQL
+#   - 宿主机的 MySQL 数据目录（含 binlog 文件）只读挂载进 agent 容器
+#   - 宿主机 MySQL 必须开启 binlog：log-bin=mysql-bin、binlog-format=ROW、
+#     binlog-row-image=FULL（Windows: my.ini 中 [mysqld] 段）
 
-  # One-shot provisioning: waits for the server CA, registers an agent via
-  # the API, issues its mTLS client certificate, and writes the encrypted
-  # agent config into the shared agent-config volume.
+services:
+  # 一次性初始化：提取 server CA → 通过 API 注册 agent → 签发 mTLS 证书 →
+  # 写入加密的 agent 配置（MySQL 连接指向宿主机）
   provision:
     build:
       context: .
       target: agent
     entrypoint: ["/bin/sh", "/scripts/e2e-provision.sh"]
     environment:
-      PITR_PASSPHRASE: pitr-test
+      PITR_PASSPHRASE: ${PITR_PASSPHRASE:-pitr-test}
+      MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mysql}
+      # 容器内挂载点，config 的 binlog_dir 指向此处（覆盖 Windows 路径自动发现）
+      MYSQL_BINLOG_DIR: /var/lib/mysql
     depends_on:
       server:
         condition: service_started
@@ -36,6 +31,9 @@ services:
       - ./scripts:/scripts:ro
       - server-data:/var/lib/mysql-pitr:ro
       - agent-config:/etc/agent
+      - ${MYSQL_BINLOG_DIR_HOST:?set MYSQL_BINLOG_DIR_HOST in .env (host MySQL data dir)}:/var/lib/mysql:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - pitr-network
     restart: "no"
@@ -44,14 +42,16 @@ services:
     build:
       context: .
       target: agent
-    command: ["serve", "--config=/etc/agent/config.json", "--passphrase=pitr-test"]
+    command: ["serve", "--config=/etc/agent/config.json", "--passphrase=${PITR_PASSPHRASE:-pitr-test}"]
     depends_on:
       provision:
         condition: service_completed_successfully
     volumes:
-      - mysql-data:/var/lib/mysql:ro
+      - ${MYSQL_BINLOG_DIR_HOST:?set MYSQL_BINLOG_DIR_HOST in .env (host MySQL data dir)}:/var/lib/mysql:ro
       - agent-config:/etc/agent:ro
       - agent-data:/var/lib/mysql-pitr
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - pitr-network
     restart: unless-stopped
@@ -64,22 +64,17 @@ services:
       - "8080:8080"
       - "9443:9443"
     environment:
-      DATABASE_URL: "root:pitr_test@tcp(mysql:3306)/pitr_server"
       LISTEN_ADDR: ":8080"
       AGENT_LISTEN_ADDR: ":9443"
       AGENT_DATA_DIR: /var/lib/mysql-pitr
       AGENT_CERT_HOSTS: "server,localhost,127.0.0.1"
     volumes:
       - server-data:/var/lib/mysql-pitr
-    depends_on:
-      mysql:
-        condition: service_healthy
     networks:
       - pitr-network
     restart: unless-stopped
 
 volumes:
-  mysql-data:
   server-data:
   agent-data:
   agent-config:

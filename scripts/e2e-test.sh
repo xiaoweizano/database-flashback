@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # ============================================================================
-# E2E Test Script for MySQL PITR (agent-based architecture)
+# E2E Test Script for MySQL PITR (agent-based architecture, host MySQL)
 # ============================================================================
 #
 # Prerequisites:
 #   - Docker & Docker Compose installed
-#   - Ports 3306 (MySQL), 8080 (server web), 9443 (server mTLS) must be free
+#   - A MySQL 8.0 on the HOST with binlog enabled (log-bin=mysql-bin,
+#     binlog-format=ROW, binlog-row-image=FULL) and a mysql client
+#   - .env configured per .env.example (MYSQL_HOST, MYSQL_PASSWORD,
+#     MYSQL_BINLOG_DIR_HOST)
+#   - Ports 8080 (server web), 9443 (server mTLS) must be free
 #
 # This script:
-#   1. Starts MySQL + provision + agent + server via docker compose
-#   2. Waits for MySQL to become healthy
-#   3. Waits for the provision step (CA extraction, agent registration, certs)
-#   4. Waits for the agent to connect to the server hub
-#   5. Creates a test table, mutates it, and runs a full PITR operation
-#      through the API (preflight -> parse -> execute) via the agent
-#   6. Verifies the operation completed and the flashback restored rows
-#   7. Cleans up containers and volumes
+#   1. Starts provision + agent + server via docker compose (no mysql container)
+#   2. Waits for the provision step (CA extraction, agent registration, certs)
+#   3. Waits for the agent to connect to the server hub
+#   4. Creates a test table on the HOST MySQL, mutates it, and runs a full
+#      PITR operation through the API (preflight -> parse -> execute)
+#   5. Verifies the operation completed and the flashback restored rows
+#   6. Cleans up containers and volumes
 #
 # Usage:
 #   ./scripts/e2e-test.sh          # run full test suite
@@ -34,6 +37,17 @@ for arg in "$@"; do
     --skip-cleanup) SKIP_CLEANUP=true ;;
   esac
 done
+
+# Host MySQL connection (same .env the compose stack uses).
+MYSQL_HOST="${MYSQL_HOST:-host.docker.internal}"
+MYSQL_PORT="${MYSQL_PORT:-3306}"
+MYSQL_USER="${MYSQL_USER:-root}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+MYSQL_TEST_DB="${MYSQL_TEST_DB:-pitr_test}"
+
+mysql_cmd() {
+  mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$@"
+}
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -74,33 +88,43 @@ fi
 # Step 1: Start services
 # ---------------------------------------------------------------------------
 
-log "Starting MySQL, server, provision, and agent services..."
+log "Starting server, provision, and agent services..."
 ${COMPOSE_CMD} -f "$COMPOSE_FILE" up -d 2>&1
 
 # ---------------------------------------------------------------------------
-# Step 2: Wait for MySQL readiness
+# Step 2: Verify host MySQL is reachable and binlog is enabled
 # ---------------------------------------------------------------------------
 
-log "Waiting for MySQL to become healthy..."
-RETRIES=30
+log "Checking host MySQL at $MYSQL_HOST:$MYSQL_PORT..."
+RETRIES=15
 TIMEOUT=5
 HEALTHY=false
 
 for i in $(seq 1 $RETRIES); do
-  if ${COMPOSE_CMD} -f "$COMPOSE_FILE" exec -T mysql mysqladmin ping -h localhost --silent 2>/dev/null; then
+  if mysqladmin -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" ping --silent 2>/dev/null; then
     HEALTHY=true
-    log "MySQL is ready (attempt ${i})."
+    log "Host MySQL is reachable (attempt ${i})."
     break
   fi
-  log "Waiting for MySQL... (attempt ${i}/${RETRIES})"
+  log "Waiting for host MySQL... (attempt ${i}/${RETRIES})"
   sleep "$TIMEOUT"
 done
 
 if [ "$HEALTHY" = false ]; then
-  echo "ERROR: MySQL did not become healthy within ${RETRIES} retries."
-  ${COMPOSE_CMD} -f "$COMPOSE_FILE" logs mysql
+  echo "ERROR: host MySQL not reachable within ${RETRIES} retries."
+  echo "Check .env (MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD) and that MySQL is running."
   exit 1
 fi
+
+BINLOG_FORMAT=$(mysql_cmd -N -e "SHOW VARIABLES LIKE 'binlog_format'" 2>/dev/null | awk '{print $2}')
+if [ "$BINLOG_FORMAT" != "ROW" ]; then
+  echo "ERROR: host MySQL binlog_format is '${BINLOG_FORMAT}', expected ROW."
+  echo "Set binlog_format=ROW and binlog_row_image=FULL in my.ini, then restart MySQL."
+  exit 1
+fi
+log "binlog_format: ${BINLOG_FORMAT}"
+
+mysql_cmd -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_TEST_DB}"
 
 # ---------------------------------------------------------------------------
 # Step 3: Wait for provisioning and agent connection
@@ -151,7 +175,7 @@ fi
 
 log "Creating test table and sample data..."
 
-${COMPOSE_CMD} -f "$COMPOSE_FILE" exec -T mysql mysql -uroot -ppitr_test pitr_test <<'SQL'
+mysql_cmd "$MYSQL_TEST_DB" <<'SQL'
 DROP TABLE IF EXISTS e2e_test;
 CREATE TABLE e2e_test (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -170,7 +194,7 @@ RECOVERY_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sleep 2
 
 # Mutations we want the flashback to undo (all after RECOVERY_TIME).
-${COMPOSE_CMD} -f "$COMPOSE_FILE" exec -T mysql mysql -uroot -ppitr_test pitr_test <<'SQL'
+mysql_cmd "$MYSQL_TEST_DB" <<'SQL'
 UPDATE e2e_test SET amount = amount + 10 WHERE name = 'Alice';
 DELETE FROM e2e_test WHERE name = 'Charlie';
 SQL
@@ -179,7 +203,7 @@ log "Starting PITR operation via API (agent_id=$AGENT_ID, recovery_time=$RECOVER
 START_RESP=$(curl -fsS -X POST http://localhost:8080/api/pitr/start \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"agent_id\":\"$AGENT_ID\",\"target_table\":\"pitr_test.e2e_test\",\"recovery_time\":\"$RECOVERY_TIME\",\"mode\":\"execute\"}")
+  -d "{\"agent_id\":\"$AGENT_ID\",\"target_table\":\"${MYSQL_TEST_DB}.e2e_test\",\"recovery_time\":\"$RECOVERY_TIME\",\"mode\":\"execute\"}")
 OP_ID=$(echo "$START_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['operationId'])")
 log "Operation $OP_ID started."
 
@@ -212,7 +236,7 @@ log "Operation completed."
 # ---------------------------------------------------------------------------
 
 log "Verifying rollback result..."
-ROW_COUNT=$(${COMPOSE_CMD} -f "$COMPOSE_FILE" exec -T mysql mysql -uroot -ppitr_test pitr_test -N -e \
+ROW_COUNT=$(mysql_cmd "$MYSQL_TEST_DB" -N -e \
   "SELECT COUNT(*) FROM e2e_test WHERE name = 'Charlie'" 2>/dev/null | tr -d '[:space:]')
 if [ "$ROW_COUNT" = "1" ]; then
   log "PASS: deleted row 'Charlie' restored by the rollback."

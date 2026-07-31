@@ -1,12 +1,13 @@
 #!/bin/sh
 # ============================================================================
-# E2E provisioning: register an agent, issue its mTLS certificate from the
+# Provisioning: register an agent, issue its mTLS certificate from the
 # server's internal CA, and write the encrypted agent config.
 #
 # Runs once inside the `provision` compose service (agent image). Expects:
 #   - server:8080 reachable (REST API)
 #   - /var/lib/mysql-pitr/ca.json (server CA, created on server startup)
 #   - /etc/agent writable (agent-config volume)
+#   - MYSQL_HOST / MYSQL_PASSWORD etc. set by compose (host MySQL)
 # ============================================================================
 set -e
 
@@ -16,6 +17,14 @@ SERVER_URL="http://server:8080"
 DATA_DIR="/var/lib/mysql-pitr"
 CONFIG_DIR="/etc/agent"
 PASSPHRASE="${PITR_PASSPHRASE:-pitr-test}"
+
+# Host MySQL connection (configured via .env, see docker-compose.yml).
+MYSQL_HOST="${MYSQL_HOST:-host.docker.internal}"
+MYSQL_PORT="${MYSQL_PORT:-3306}"
+MYSQL_USER="${MYSQL_USER:-root}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+MYSQL_DATABASE="${MYSQL_DATABASE:-mysql}"
+MYSQL_BINLOG_DIR="${MYSQL_BINLOG_DIR:-/var/lib/mysql}"
 
 echo "[provision] waiting for server CA..."
 for i in $(seq 1 60); do
@@ -77,11 +86,11 @@ echo "[provision] writing encrypted agent config..."
 cat > "$CONFIG_DIR/plain.json" <<EOF
 {
   "mysql": {
-    "host": "mysql",
-    "port": 3306,
-    "user": "root",
-    "password": "pitr_test",
-    "database": "pitr_test"
+    "host": "$MYSQL_HOST",
+    "port": $MYSQL_PORT,
+    "user": "$MYSQL_USER",
+    "password": "$MYSQL_PASSWORD",
+    "database": "$MYSQL_DATABASE"
   },
   "server": {
     "url": "wss://server:9443/ws/agent",
@@ -89,7 +98,8 @@ cat > "$CONFIG_DIR/plain.json" <<EOF
     "key_file": "$CONFIG_DIR/client-key.pem",
     "ca_file": "$CONFIG_DIR/ca.pem"
   },
-  "data_dir": "/var/lib/mysql-pitr"
+  "data_dir": "/var/lib/mysql-pitr",
+  "binlog_dir": "$MYSQL_BINLOG_DIR"
 }
 EOF
 
