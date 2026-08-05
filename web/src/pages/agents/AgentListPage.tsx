@@ -12,7 +12,7 @@ import {
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
-import { listAgents, registerAgent, rejectAgent } from '../../api/agents';
+import { listAgents, registerAgent, rejectAgent, approveAgent } from '../../api/agents';
 import { listOrgs } from '../../api/org';
 import { useLocale } from '../../hooks/useLocale';
 import type { AgentInfo } from '../../types';
@@ -78,6 +78,18 @@ export default function AgentListPage() {
     },
     onError: () => {
       message.error(t('agents.rejectFailed'));
+    },
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id: string) => approveAgent(id),
+    onSuccess: () => {
+      message.success(t('agents.approveSuccess'));
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      setDetailAgent(null);
+    },
+    onError: () => {
+      message.error(t('agents.approveFailed'));
     },
   });
 
@@ -300,7 +312,21 @@ export default function AgentListPage() {
         title={t('agents.detail')}
         open={!!detailAgent}
         onCancel={() => setDetailAgent(null)}
-        footer={<Button onClick={() => setDetailAgent(null)}>{t('common.close')}</Button>}
+        footer={
+          <Space>
+            {detailAgent && !detailAgent.approved && (
+              <Button
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                loading={approveMutation.isPending}
+                onClick={() => approveMutation.mutate(detailAgent.id)}
+              >
+                {t('agents.approve')}
+              </Button>
+            )}
+            <Button onClick={() => setDetailAgent(null)}>{t('common.close')}</Button>
+          </Space>
+        }
         width={600}
       >
         {detailAgent && (
