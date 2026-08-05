@@ -43,11 +43,21 @@ RUN npm run build
 # =============================================================================
 FROM alpine:3.20 AS agent
 
-# mariadb-client provides mysqlbinlog (symlinked for name compatibility),
-# which the agent uses to parse local binlog files.
-RUN apk add --no-cache ca-certificates tzdata mariadb-client mariadb-server-utils && \
-    ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
-    test -x /usr/bin/mysqlbinlog
+# mariadb-client provides mariadb-binlog, which the agent uses to parse local
+# binlog files. We locate the binary dynamically (path varies across Alpine /
+# MariaDB versions) and expose it as mysqlbinlog for the agent's PATH lookup.
+RUN set -e && \
+    apk add --no-cache ca-certificates tzdata mariadb-client mariadb-server-utils && \
+    BINLOG="$(command -v mariadb-binlog || true)" && \
+    if [ -z "$BINLOG" ]; then \
+        BINLOG="$(find /usr -type f -name 'mariadb-binlog' 2>/dev/null | head -n1)"; \
+    fi && \
+    if [ -z "$BINLOG" ]; then \
+        echo "ERROR: mariadb-binlog not found after apk add" >&2; exit 1; \
+    fi && \
+    ln -sf "$BINLOG" /usr/bin/mysqlbinlog && \
+    /usr/bin/mysqlbinlog --version >/dev/null && \
+    echo "linked mysqlbinlog -> $BINLOG"
 
 COPY --from=builder /build/mysql-pitr-agent /usr/local/bin/mysql-pitr-agent
 
