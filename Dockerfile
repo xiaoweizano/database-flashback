@@ -41,27 +41,25 @@ RUN npm run build
 # =============================================================================
 # Stage 3: Agent image
 # =============================================================================
-FROM alpine:3.20 AS agent
+# Base on debian:slim and install mariadb-client, which provides both
+# mariadb-binlog and a /usr/bin/mysqlbinlog compatibility symlink. Alpine
+# 3.20's mariadb packaging splits the binlog tool out of mariadb-client /
+# mariadb-server-utils / mariadb-server entirely, but Debian's packaging
+# keeps it where it belongs. mariadb-binlog parses both MariaDB and MySQL
+# binlogs. ~150MB vs ~600MB for mysql:8.0 as the agent base.
+FROM debian:12-slim AS agent
 
-# mariadb-client provides mariadb-binlog, which the agent uses to parse local
-# binlog files. We locate the binary dynamically (path varies across Alpine /
-# MariaDB versions) and expose it as mysqlbinlog for the agent's PATH lookup.
-RUN set -e && \
-    apk add --no-cache ca-certificates tzdata mariadb-client mariadb-server-utils && \
-    BINLOG="$(command -v mariadb-binlog || true)" && \
-    if [ -z "$BINLOG" ]; then \
-        BINLOG="$(find /usr -type f -name 'mariadb-binlog' 2>/dev/null | head -n1)"; \
-    fi && \
-    if [ -z "$BINLOG" ]; then \
-        echo "ERROR: mariadb-binlog not found after apk add" >&2; exit 1; \
-    fi && \
-    ln -sf "$BINLOG" /usr/bin/mysqlbinlog && \
-    /usr/bin/mysqlbinlog --version >/dev/null && \
-    echo "linked mysqlbinlog -> $BINLOG"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tzdata mariadb-client && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
+    test -x /usr/bin/mysqlbinlog && \
+    mysqlbinlog --version
 
 COPY --from=builder /build/mysql-pitr-agent /usr/local/bin/mysql-pitr-agent
 
 ENTRYPOINT ["mysql-pitr-agent"]
+CMD []
 
 # =============================================================================
 # Stage 4: Server image
