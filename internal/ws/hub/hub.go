@@ -14,7 +14,10 @@ import (
 )
 
 const (
-	readDeadline = 30 * time.Second
+	// readDeadline matches the agent's pongWait (90s): the agent heartbeats
+	// with a ping every 30s (client.go pingInterval), so 90s gives three
+	// missed heartbeats before we declare the connection dead.
+	readDeadline = 90 * time.Second
 	writeTimeout = 10 * time.Second
 )
 
@@ -131,8 +134,14 @@ func (h *Hub) HandleConnection(conn *gorilla.Conn, r *http.Request) {
 
 	log.Printf("hub: agent %s connected", agentID)
 
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(readDeadline))
+	// The agent heartbeats by sending a ping every 30s; it never sends pong
+	// frames itself. Refresh our read deadline on each ping and reply with a
+	// pong. The default gorilla PingHandler would reply automatically but
+	// would not refresh the deadline, which previously killed every
+	// connection at readDeadline.
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
+		return conn.WriteControl(gorilla.PongMessage, []byte(appData), time.Now().Add(writeTimeout))
 	})
 
 	if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {

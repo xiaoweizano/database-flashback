@@ -69,13 +69,36 @@ func New() (*Server, error) {
 	pitrHandler := pitr.NewHandler(pitrStore, agentStore, orgStore, auditStore, jwtSecret(), agentHub)
 	auditHandler := audit.NewHandler(auditStore, orgStore, jwtSecret())
 
-	// Keep the agents API's status field in sync with the hub.
+	// Keep the agents API's status field in sync with the hub. Unknown agents
+	// (e.g. after a server restart cleared the in-memory store) are registered
+	// automatically so they show up in the UI and are selectable in PITR.
 	agentHub.SetLifecycleHooks(hub.LifecycleHooks{
 		OnConnect: func(agentID string) {
 			if rec, err := agentStore.Get(agentID); err == nil {
 				rec.Status = "online"
 				rec.LastSeen = time.Now()
 				_ = agentStore.Update(rec)
+				return
+			}
+
+			// Presenting a CA-signed mTLS certificate proves registration, so
+			// trust it and auto-register the agent under the first org.
+			orgs, _ := orgStore.ListAll()
+			var orgID string
+			if len(orgs) > 0 {
+				orgID = orgs[0].ID
+			}
+			rec := &agent.AgentRecord{
+				ID:        agentID,
+				OrgID:     orgID,
+				Hostname:  agentID,
+				Status:    "online",
+				LastSeen:  time.Now(),
+				CreatedAt: time.Now(),
+				Approved:  true,
+			}
+			if err := agentStore.Create(rec); err == nil {
+				log.Printf("server: auto-registered connected agent %s", agentID)
 			}
 		},
 		OnDisconnect: func(agentID string) {
