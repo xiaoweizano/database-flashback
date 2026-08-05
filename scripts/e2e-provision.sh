@@ -82,7 +82,13 @@ AGENT_ID=$(curl -fsS -X POST "$SERVER_URL/api/agents/register" \
 
 echo "[provision] agent id: $AGENT_ID"
 
-echo "[provision] issuing client certificate (CN=$AGENT_ID)..."
+# The PITR wizard only lists approved agents, so approve immediately after
+# registration (registration already required the platform admin token).
+echo "[provision] approving agent..."
+curl -fsS -X POST "$SERVER_URL/api/agents/$AGENT_ID/approve" \
+  -H "Authorization: Bearer $TOKEN" >/dev/null
+
+echo "[provision] issuing client certificate (CN=$AGENT_ID)...";
 openssl ecparam -name prime256v1 -genkey -noout -out "$CONFIG_DIR/client-key.pem"
 openssl req -new -key "$CONFIG_DIR/client-key.pem" -subj "/CN=$AGENT_ID" -out /tmp/client.csr
 openssl x509 -req -in /tmp/client.csr \
