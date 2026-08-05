@@ -11,7 +11,14 @@
 # ============================================================================
 set -e
 
-apk add --no-cache python3 openssl curl jq >/dev/null 2>&1
+# Provisioning tools are preinstalled in the agent image (debian base). Fall
+# back to installing them on the fly when this script runs on other bases.
+if command -v apk >/dev/null 2>&1; then
+  apk add --no-cache python3 openssl curl jq >/dev/null 2>&1 || true
+elif command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq >/dev/null 2>&1 && \
+    apt-get install -y -qq --no-install-recommends python3 openssl curl jq >/dev/null 2>&1 || true
+fi
 
 SERVER_URL="http://server:8080"
 DATA_DIR="/var/lib/mysql-pitr"

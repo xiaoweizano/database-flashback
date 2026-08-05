@@ -49,8 +49,11 @@ RUN npm run build
 # binlogs. ~150MB vs ~600MB for mysql:8.0 as the agent base.
 FROM debian:12-slim AS agent
 
+# python3/openssl/curl/jq are preinstalled for the provision service, which
+# shares this agent image (scripts/e2e-provision.sh uses them to register the
+# agent and issue its mTLS certificate).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata mariadb-client && \
+        ca-certificates tzdata mariadb-client python3 openssl curl jq && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/mariadb-binlog /usr/bin/mysqlbinlog && \
     test -x /usr/bin/mysqlbinlog && \
