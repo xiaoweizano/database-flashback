@@ -645,6 +645,82 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Execute runs the selected reverse-SQL statements for a previewed operation.
+// The request body may carry the user-chosen statements ("sql"); when empty,
+// the full generated batch is executed. The actual execution happens
+// asynchronously on the agent — this endpoint only triggers it.
+//
+// POST /api/pitr/{id}/execute
+func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromRequest(r)
+	operator := emailFromRequest(r)
+	if userID == "" || operator == "" {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	opID := chi.URLParam(r, "id")
+	if opID == "" {
+		writeError(w, http.StatusBadRequest, "missing operation id")
+		return
+	}
+
+	op, err := h.opStore.Get(opID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Verify org membership.
+	members, err := h.orgStore.ListMembers(op.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "organisation not found")
+		return
+	}
+	if !orgMemberContains(members, userID) {
+		writeError(w, http.StatusForbidden, "not a member of this organisation")
+		return
+	}
+
+	if op.State != StatePreviewed {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("cannot execute operation in state %q (run the preview first)", op.State))
+		return
+	}
+	if op.ParseRes == nil {
+		writeError(w, http.StatusConflict, "operation has no parsed result")
+		return
+	}
+	if !h.agentConnected(op.AgentID) {
+		writeError(w, http.StatusConflict, "agent is offline — start it with `mysql-pitr-agent serve` first")
+		return
+	}
+
+	var req struct {
+		SQL []string `json:"sql,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	sqls := req.SQL
+	if len(sqls) == 0 {
+		sqls = op.ParseRes.SQLs
+	}
+	if len(sqls) == 0 {
+		writeError(w, http.StatusBadRequest, "no SQL statements to execute")
+		return
+	}
+
+	go h.executeOperation(op, operator, sqls)
+
+	writeJSON(w, http.StatusAccepted, startResponse{
+		OperationID: op.ID,
+		Status:      StateExecuting,
+	})
+}
+
 // ---------- background operation execution ----------
 
 // agentConnected reports whether the operation's agent currently has a live
@@ -794,19 +870,36 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		RowsAffected: parseRes.TotalRows,
 		SQLSample:    parseRes.SQLSample,
 		ReverseSql:   parseRes.Preview,
+		SQLs:         parseRes.ReverseSql,
 	}
 	_ = h.opStore.Update(op)
 
 	h.recordAudit(op, operator, "previewed", "")
 
-	// Preview mode stops here
+	// Preview mode stops here — execution only happens via the explicit
+	// POST /api/pitr/{id}/execute endpoint (user selects the statements).
 	if op.Mode == "preview" {
 		return
 	}
 
-	// ================================================================
-	// Phase 3: previewed -> executing -> completed
-	// ================================================================
+	h.executeOperation(op, operator, op.ParseRes.SQLs)
+}
+
+// executeOperation drives the previewed -> executing -> completed phase of the
+// state machine by sending the given reverse-SQL statements to the agent. It
+// runs asynchronously; batch progress is pushed back by the agent.
+func (h *Handler) executeOperation(op *Operation, operator string, sqls []string) {
+	defer func() {
+		if r := recover(); r != nil {
+			h.failOperation(op, "panic: %v", r)
+		}
+	}()
+
+	if !h.agentConnected(op.AgentID) {
+		h.failOperation(op, "agent %s is not connected (agent_offline)", op.AgentID)
+		return
+	}
+
 	if !h.tryTransition(op, StateExecuting) {
 		return
 	}
@@ -821,12 +914,13 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 
 	// Long-running; bounded by agent disconnect detection on the hub (the
 	// pending command channel is drained when the agent drops).
-	resp, err = h.commander.SendToAgent(ctx, op.AgentID, ws.Command{
+	ctx := context.Background()
+	resp, err := h.commander.SendToAgent(ctx, op.AgentID, ws.Command{
 		Cmd:  newCmdID("execute"),
 		Type: ws.CmdPITRExecute,
 		Params: map[string]interface{}{
 			"operationId":  op.ID,
-			"sql":          parseRes.ReverseSql,
+			"sql":          sqls,
 			"batchSize":    100,
 			"targetTable":  op.TargetTable,
 			"recoveryTime": op.RecoveryTime.Format(time.RFC3339),

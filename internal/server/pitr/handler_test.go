@@ -689,3 +689,112 @@ func TestProgress_NotFound(t *testing.T) {
 	f.handler.Progress(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+// ---------- Execute (explicit, user-selected SQL) ----------
+
+func TestExecute_SelectedSQL(t *testing.T) {
+	f := setupTest(t)
+	userID := f.createUser(t)
+	orgID := f.createOrg(t, userID)
+	agentID := f.createAgent(t, orgID)
+
+	// Start a preview operation and wait for it to reach the previewed state.
+	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/start", startRequest{
+		AgentID:      agentID,
+		TargetTable:  "orders",
+		RecoveryTime: "2026-07-08T14:00:00Z",
+		Mode:         "preview",
+	}, userID)
+	w := httptest.NewRecorder()
+	f.handler.Start(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var startResp startResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&startResp))
+
+	op := waitForOperationState(t, f.opStore, startResp.OperationID,
+		[]OperationState{StatePreviewed, StateCompleted, StateFailed, StateCancelled}, 5*time.Second)
+	require.Equal(t, StatePreviewed, op.State)
+
+	// Execute only a subset of the generated statements.
+	selected := []string{"DELETE FROM `orders` WHERE `id` = 1 LIMIT 1;"}
+	req = f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/execute", op.ID,
+		map[string]interface{}{"sql": selected}, userID)
+	w = httptest.NewRecorder()
+	f.handler.Execute(w, req)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	// The async execution must complete and send exactly the selected SQL.
+	op = waitForOperationState(t, f.opStore, op.ID, []OperationState{StateCompleted, StateFailed, StateCancelled}, 5*time.Second)
+	require.Equal(t, StateCompleted, op.State)
+	require.NotNil(t, op.ExecRes)
+
+	require.Len(t, f.commander.sent, 3) // preflight, parse, execute
+	execCmd := f.commander.sent[2]
+	assert.Equal(t, ws.CmdPITRExecute, execCmd.Type)
+	sqls, ok := execCmd.Params["sql"].([]string)
+	require.True(t, ok)
+	assert.Equal(t, selected, sqls)
+}
+
+func TestExecute_EmptySQLUsesFullBatch(t *testing.T) {
+	f := setupTest(t)
+	userID := f.createUser(t)
+	orgID := f.createOrg(t, userID)
+	agentID := f.createAgent(t, orgID)
+
+	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/start", startRequest{
+		AgentID:      agentID,
+		TargetTable:  "orders",
+		RecoveryTime: "2026-07-08T14:00:00Z",
+		Mode:         "preview",
+	}, userID)
+	w := httptest.NewRecorder()
+	f.handler.Start(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var startResp startResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&startResp))
+
+	op := waitForOperationState(t, f.opStore, startResp.OperationID,
+		[]OperationState{StatePreviewed, StateCompleted, StateFailed, StateCancelled}, 5*time.Second)
+	require.Equal(t, StatePreviewed, op.State)
+
+	// No "sql" in the body -> the full generated batch is executed.
+	req = f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/execute", op.ID,
+		map[string]interface{}{}, userID)
+	w = httptest.NewRecorder()
+	f.handler.Execute(w, req)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	op = waitForOperationState(t, f.opStore, op.ID, []OperationState{StateCompleted, StateFailed, StateCancelled}, 5*time.Second)
+	require.Equal(t, StateCompleted, op.State)
+
+	require.Len(t, f.commander.sent, 3)
+	execCmd := f.commander.sent[2]
+	sqls, ok := execCmd.Params["sql"].([]string)
+	require.True(t, ok)
+	require.Len(t, sqls, 1250) // full batch from the fake parse
+}
+
+func TestExecute_NotPreviewed(t *testing.T) {
+	f := setupTest(t)
+	userID := f.createUser(t)
+	orgID := f.createOrg(t, userID)
+	agentID := f.createAgent(t, orgID)
+
+	op := &Operation{OrgID: orgID, AgentID: agentID, TargetTable: "orders", Mode: "preview", State: StatePreflight}
+	require.NoError(t, f.opStore.Create(op))
+
+	req := f.authenticatedRouteRequest(t, http.MethodPost, "/api/pitr/"+op.ID+"/execute", op.ID, nil, userID)
+	w := httptest.NewRecorder()
+	f.handler.Execute(w, req)
+	require.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestExecute_NoAuth(t *testing.T) {
+	f := setupTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pitr/xxx/execute", nil)
+	w := httptest.NewRecorder()
+	f.handler.Execute(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}

@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Steps, Card, Form, Select, Input, InputNumber, DatePicker, Button, Typography,
-  Spin, Empty, Alert, Progress, Descriptions, Space, Tag, message, notification,
+  Spin, Empty, Alert, Descriptions, Space, Tag, Checkbox, message, notification,
 } from 'antd';
 import {
   ArrowLeftOutlined, ArrowRightOutlined, CloseCircleOutlined,
@@ -13,27 +13,11 @@ import dayjs from 'dayjs';
 import { useLocale } from '../../hooks/useLocale';
 import { listAgents } from '../../api/agents';
 import { listOrgs } from '../../api/org';
-import { startPITR, getPITRStatus, getPITRProgress, cancelPITR } from '../../api/pitr';
-import type { AgentInfo, PITROperation, ProgressData } from '../../types';
+import { startPITR, getPITRStatus, cancelPITR, executePITR } from '../../api/pitr';
+import type { AgentInfo, PITROperation } from '../../types';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-
-const stateColors: Record<string, string> = {
-  preflight: 'processing',
-  confirmed: 'processing',
-  parsing: 'processing',
-  previewed: 'processing',
-  executing: 'processing',
-  completed: 'success',
-  failed: 'error',
-  cancelled: 'default',
-};
-
-function getStateTag(state: string) {
-  const color = stateColors[state] || 'default';
-  return <Tag color={color}>{state}</Tag>;
-}
 
 export default function PITRWizardPage() {
   const navigate = useNavigate();
@@ -43,7 +27,6 @@ export default function PITRWizardPage() {
     t('pitr.targetTable'),
     t('pitr.preflightCheck'),
     t('pitr.previewChanges'),
-    t('pitr.execute'),
   ];
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -74,36 +57,58 @@ export default function PITRWizardPage() {
     [agentsQuery.data],
   );
 
-  // Fetch operation status (polling for steps 2-4; stops once the operation
-  // reaches a terminal state so a failed/cancelled op doesn't poll forever)
+  // Fetch operation status (polling for steps 2-3; stops once the preview is
+  // ready, resumes while the selected SQL is being executed, and stops again
+  // at a terminal state)
   const statusQuery = useQuery({
     queryKey: ['pitr-status', operationId],
     queryFn: () => getPITRStatus(operationId!),
-    enabled: !!operationId && currentStep >= 2 && currentStep <= 4,
+    enabled: !!operationId && currentStep >= 2 && currentStep <= 3,
     refetchInterval: (query) => {
       const state = query.state.data?.state;
-      if (!operationId || currentStep < 2 || currentStep > 4) return false;
+      if (!operationId || currentStep < 2 || currentStep > 3) return false;
       if (state === 'completed' || state === 'failed' || state === 'cancelled') return false;
+      if (state === 'previewed' && !executeMode) return false;
       return 1500;
     },
   });
 
   const operation: PITROperation | undefined = statusQuery.data;
 
-  // Fetch progress (step 4 only)
-  const progressQuery = useQuery({
-    queryKey: ['pitr-progress', operationId],
-    queryFn: () => getPITRProgress(operationId!),
-    enabled: !!operationId && currentStep === 4,
-    refetchInterval: (query) => {
-      const state = query.state.data?.state;
-      if (!operationId || currentStep !== 4) return false;
-      if (state === 'completed' || state === 'failed' || state === 'cancelled') return false;
-      return 2000;
+  // Preview-only flow: the user reviews the generated SQL and selects which
+  // statements to execute. reverseSql is the preview entries in execution
+  // order (newest-first, LIFO).
+  const reverseSql = useMemo(
+    () => (operation?.parseResult?.reverseSql ?? []).slice().reverse(),
+    [operation],
+  );
+  const [selected, setSelected] = useState<number[] | null>(null);
+  const [executeMode, setExecuteMode] = useState(false);
+  useEffect(() => {
+    if (selected === null && reverseSql.length > 0) {
+      setSelected(reverseSql.map((_, i) => i)); // default: all statements selected
+    }
+  }, [selected, reverseSql]);
+
+  // Execute the user-selected statements (only then does the database change).
+  const executeMutation = useMutation({
+    mutationFn: () => executePITR(operationId!, (selected ?? []).map((i) => reverseSql[i].reverseSql)),
+    onSuccess: () => {
+      setExecuteMode(true);
+      message.success(t('pitr.executeStarted'));
+    },
+    onError: (err: Error) => {
+      notification.error({ message: t('common.error'), description: err.message });
     },
   });
 
-  const progress: ProgressData | undefined = progressQuery.data;
+  const handleExecute = () => {
+    if (!selected || selected.length === 0) {
+      message.warning(t('pitr.noSelection'));
+      return;
+    }
+    executeMutation.mutate();
+  };
 
   // Start operation mutation
   const startMutation = useMutation({
@@ -111,7 +116,9 @@ export default function PITRWizardPage() {
       agent_id: selectedAgentId!,
       target_table: targetTable,
       recovery_time: dayjs(recoveryTime).toISOString(),
-      mode: 'execute',
+      // Preview-only: generate the reverse SQL from the binlog without touching
+      // the database. The user decides which statements to run themselves.
+      mode: 'preview',
       binlog_files: binlogFiles
         ? binlogFiles.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined,
@@ -181,16 +188,9 @@ export default function PITRWizardPage() {
     startMutation.mutate();
   }, [selectedAgentId, targetTable, recoveryTime, startMutation]);
 
-  // Compute progress bar percent
-  const progressPercent = useMemo(() => {
-    if (!progress) return 0;
-    if (progress.batchesTotal <= 0) return 0;
-    return Math.round((progress.batchesComplete / progress.batchesTotal) * 100);
-  }, [progress]);
-
-  const isCompleted = operation?.state === 'completed';
+  const isPreviewed = operation?.state === 'previewed';
   const isFailed = operation?.state === 'failed' || operation?.state === 'cancelled';
-  const isTerminal = isCompleted || isFailed;
+  const isTerminal = isPreviewed || isFailed;
 
   // ---- Step Renderers ----
 
@@ -444,12 +444,33 @@ export default function PITRWizardPage() {
       return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.loadingPreview')} /></div>;
     }
 
+    const isExecuting = op.state === 'executing';
+    const isCompleted = op.state === 'completed';
+    const selectionDisabled = isExecuting || isCompleted;
+
+    const handleCopyAll = () => {
+      const text = reverseSql.map((entry) => entry.reverseSql).filter(Boolean).join('\n');
+      navigator.clipboard.writeText(text).then(
+        () => message.success(t('pitr.copySuccess')),
+        () => message.error(t('common.error')),
+      );
+    };
+
+    const toggleSelect = (i: number) => {
+      setSelected((prev) => {
+        const cur = prev ?? [];
+        return cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i];
+      });
+    };
+
     return (
       <div>
         <Alert
-          type="success"
-          message={t('pitr.parseCompleted')}
-          description={t('pitr.parseDesc')}
+          type={isCompleted ? 'success' : 'info'}
+          message={isCompleted ? t('pitr.recoveryCompleted') : t('pitr.parseCompleted')}
+          description={isCompleted
+            ? `${t('pitr.rowsRestored')}: ${op.execResult?.rowsRestored?.toLocaleString() ?? '0'}`
+            : t('pitr.parseDesc')}
           showIcon
           style={{ marginBottom: 16 }}
         />
@@ -464,100 +485,85 @@ export default function PITRWizardPage() {
             <Descriptions.Item label={t('pitr.targetTable')}>{op.targetTable}</Descriptions.Item>
           </Descriptions>
         </Card>
-        {parseRes.sqlSample && (
-          <Card size="small" title={t('pitr.sampleSql')} style={{ marginTop: 16 }}>
-            <pre style={{
-              background: '#f5f5f5',
-              padding: 12,
-              borderRadius: 4,
-              fontSize: 12,
-              overflowX: 'auto',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}>
-              {parseRes.sqlSample}
-            </pre>
+        {reverseSql.length > 0 && (
+          <Card
+            size="small"
+            title={t('pitr.generatedSql')}
+            style={{ marginTop: 16 }}
+            extra={
+              <Space>
+                <Button size="small" onClick={handleCopyAll} disabled={selectionDisabled}>
+                  {t('pitr.copyAll')}
+                </Button>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<CheckCircleOutlined />}
+                  onClick={handleExecute}
+                  loading={executeMutation.isPending}
+                  disabled={selectionDisabled || !selected || selected.length === 0}
+                >
+                  {t('pitr.executeSelected')}
+                </Button>
+              </Space>
+            }
+          >
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+              {isExecuting
+                ? t('pitr.executingDesc')
+                : isCompleted
+                  ? t('pitr.executedDesc')
+                  : t('pitr.selectSqlHint')}
+            </Text>
+            {isExecuting && (
+              <Card size="small" style={{ marginBottom: 12, background: '#fafafa' }}>
+                <Descriptions column={2} size="small">
+                  <Descriptions.Item label={t('pitr.batches')}>
+                    {op.progress?.batchesComplete ?? 0} / {op.progress?.batchesTotal ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('pitr.rowsRestored')}>
+                    {op.progress?.rowsRestored?.toLocaleString() ?? '0'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('pitr.estRemaining')}>
+                    {op.progress?.estimatedRemaining || t('pitr.calculating')}
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            )}
+            <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+              {reverseSql.map((entry, i) => (
+                <div key={`${entry.sequence}-${i}`} style={{ marginBottom: 12 }}>
+                  <Checkbox
+                    checked={(selected ?? []).includes(i)}
+                    disabled={selectionDisabled}
+                    onChange={() => toggleSelect(i)}
+                  >
+                    <Text>{i + 1}. [{entry.sqlType}] {entry.tableName}</Text>
+                  </Checkbox>
+                  <pre style={{
+                    background: '#f5f5f5',
+                    padding: 12,
+                    borderRadius: 4,
+                    fontSize: 12,
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    marginTop: 4,
+                  }}>
+                    {entry.reverseSql}
+                  </pre>
+                </div>
+              ))}
+            </div>
           </Card>
         )}
       </div>
     );
   };
 
-  const renderStep4 = () => {
-    if (isCompleted) {
-      return (
-        <div style={{ textAlign: 'center', padding: 24 }}>
-          <CheckCircleOutlined style={{ fontSize: 64, color: '#52c41a' }} />
-          <Title level={4} style={{ marginTop: 16 }}>{t('pitr.recoveryCompleted')}</Title>
-          {operation?.execResult && (
-            <Card size="small" style={{ maxWidth: 400, margin: '16px auto' }}>
-              <Descriptions column={1} size="small">
-                <Descriptions.Item label={t('pitr.rowsRestored')}>
-                  <Text strong>{operation.execResult.rowsRestored?.toLocaleString()}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={t('pitr.duration')}>{operation.execResult.duration || '-'}</Descriptions.Item>
-              </Descriptions>
-            </Card>
-          )}
-        </div>
-      );
-    }
-
-    if (isFailed) {
-      return (
-        <div style={{ textAlign: 'center', padding: 24 }}>
-          <CloseCircleOutlined style={{ fontSize: 64, color: '#ff4d4f' }} />
-          <Title level={4} style={{ marginTop: 16 }}>{
-            operation?.state === 'cancelled'
-              ? t('pitr.operationCancelled')
-              : t('pitr.operationFailed')
-          }</Title>
-          {operation?.error && (
-            <Alert type="error" message={operation.error} showIcon style={{ maxWidth: 400, margin: '16px auto' }} />
-          )}
-        </div>
-      );
-    }
-
-    // Still executing - show progress
-    if (progressQuery.isLoading && !progress) {
-      return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.startingExecution')} /></div>;
-    }
-
-    return (
-      <div style={{ padding: 24 }}>
-        <Alert
-          type="info"
-          message={t('pitr.executingRecovery')}
-          description={t('pitr.executingDesc')}
-          showIcon
-          style={{ marginBottom: 24 }}
-        />
-        <Card>
-          <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <Text type="secondary">{t('pitr.batchProgress')}</Text>
-          </div>
-          <Progress
-            type="circle"
-            percent={progressPercent}
-            status={isFailed ? 'exception' : 'active'}
-            size={200}
-            style={{ display: 'block', margin: '0 auto 24px' }}
-          />
-          <Descriptions column={2} size="small" style={{ maxWidth: 400, margin: '0 auto' }}>
-            <Descriptions.Item label={t('pitr.batches')}>{progress?.batchesComplete ?? 0} / {progress?.batchesTotal ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('pitr.rowsRestored')}>{progress?.rowsRestored?.toLocaleString() ?? '0'}</Descriptions.Item>
-            <Descriptions.Item label={t('pitr.estRemaining')}>{progress?.estimatedRemaining || t('pitr.calculating')}</Descriptions.Item>
-            <Descriptions.Item label={t('pitr.status')}>{getStateTag(operation?.state || 'executing')}</Descriptions.Item>
-          </Descriptions>
-        </Card>
-      </div>
-    );
-  };
-
   // ---- Main Render ----
 
-  const stepContent = [renderStep0, renderStep1, renderStep2, renderStep3, renderStep4];
+  const stepContent = [renderStep0, renderStep1, renderStep2, renderStep3];
 
   return (
     <div>
@@ -579,13 +585,13 @@ export default function PITRWizardPage() {
         <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
           <Space>
             {currentStep > 0 && (
-              <Button icon={<ArrowLeftOutlined />} onClick={handleBack} disabled={startMutation.isPending || cancelMutation.isPending}>
+              <Button icon={<ArrowLeftOutlined />} onClick={handleBack} disabled={startMutation.isPending || cancelMutation.isPending || operation?.state === 'executing'}>
                 {t('pitr.stepBack')}
               </Button>
             )}
           </Space>
           <Space>
-            <Button icon={<CloseCircleOutlined />} onClick={handleCancel} disabled={cancelMutation.isPending || isTerminal}>
+            <Button icon={<CloseCircleOutlined />} onClick={handleCancel} disabled={cancelMutation.isPending || isTerminal || operation?.state === 'executing'}>
               {t('common.cancel')}
             </Button>
             {currentStep === 0 && (
@@ -622,16 +628,7 @@ export default function PITRWizardPage() {
                 {t('pitr.continuePreview')}
               </Button>
             )}
-            {currentStep === 3 && (
-              <Button
-                type="primary"
-                icon={<ArrowRightOutlined />}
-                onClick={() => setCurrentStep(4)}
-              >
-                {t('pitr.executeRecovery')}
-              </Button>
-            )}
-            {(isCompleted || isFailed) && (
+            {(isPreviewed || isFailed || operation?.state === 'completed') && (
               <Button type="primary" onClick={() => navigate('/audit')}>
                 {t('pitr.viewAuditLog')}
               </Button>

@@ -46,6 +46,10 @@ type ParseSummary struct {
 	RowsAffected int64             `json:"rowsAffected"`
 	SQLSample    string            `json:"sqlSample"`
 	ReverseSql   []ReverseSqlEntry `json:"reverseSql,omitempty"`
+	// SQLs holds the full reverse-SQL batch in execution order (newest-first).
+	// Not serialized to the API: the frontend selects from ReverseSql and sends
+	// the chosen statements to the execute endpoint.
+	SQLs []string `json:"-"`
 }
 
 // ReverseSqlEntry represents a single parsed binlog entry with its

@@ -79,6 +79,7 @@ func newWebRouter(
 				r.Post("/cancel", pitrHandler.Cancel)
 				r.Get("/preview", pitrHandler.Preview)
 				r.Get("/progress", pitrHandler.Progress)
+				r.Post("/execute", pitrHandler.Execute)
 			})
 		})
 

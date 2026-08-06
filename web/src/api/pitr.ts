@@ -46,6 +46,11 @@ export async function cancelPITR(id: string): Promise<void> {
   await apiClient.post(`/pitr/${id}/cancel`);
 }
 
+export async function executePITR(id: string, sql: string[]): Promise<{ operationId: string; status: string }> {
+  const response = await apiClient.post<{ operationId: string; status: string }>(`/pitr/${id}/execute`, { sql });
+  return response.data;
+}
+
 export async function listPITROperations(orgId: string, from?: string, to?: string): Promise<PITROperation[]> {
   const params: Record<string, string> = { org_id: orgId };
   if (from) params.from = from;
