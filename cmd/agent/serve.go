@@ -295,12 +295,19 @@ func (d *serveDaemon) handlePITRParse(ctx context.Context, cmd ws.Command) *ws.R
 	preview := make([]map[string]interface{}, 0, maxEntries)
 	for i := 0; i < maxEntries; i++ {
 		ev := parseRes.Events[i]
+		// ReverseSQLBatch emits statements newest-first, so the reverse SQL for
+		// Events[i] lives at the mirrored index in the reversed batch.
+		revIdx := len(sqls) - 1 - i
+		revSQL := ""
+		if revIdx >= 0 && revIdx < len(sqls) {
+			revSQL = sqls[revIdx]
+		}
 		preview = append(preview, map[string]interface{}{
 			"sequence":     i + 1,
 			"sqlType":      string(ev.Type),
 			"tableName":    ev.Table,
 			"originalSql":  "",
-			"reverseSql":   sqls[i],
+			"reverseSql":   revSQL,
 			"rowsAffected": 1,
 		})
 	}

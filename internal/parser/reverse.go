@@ -32,12 +32,16 @@ func ReverseSQL(event connector.RowEvent, pkColumns []string) (string, error) {
 	}
 }
 
-// ReverseSQLBatch generates reverse SQL for multiple row events in order.
-// Each event produces one SQL statement; the returned slice has the same length
-// as the input events slice.
+// ReverseSQLBatch generates reverse SQL for multiple row events in the order
+// they must be applied: newest event first (LIFO). Each event's reverse undoes
+// that event, so applying them in reverse-chronological order restores the
+// table to the state before the whole batch. This matters for dependent
+// events — e.g. DELETE then re-INSERT of the same row would otherwise collide
+// on the primary key (undo the re-INSERT first, then restore the original).
 func ReverseSQLBatch(events []connector.RowEvent, pkColumns []string) ([]string, error) {
 	stmts := make([]string, 0, len(events))
-	for i, ev := range events {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
 		sql, err := ReverseSQL(ev, pkColumns)
 		if err != nil {
 			return stmts, fmt.Errorf("event %d: %w", i, err)

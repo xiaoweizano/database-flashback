@@ -423,10 +423,49 @@ func TestReverseSQLBatch(t *testing.T) {
 		t.Fatalf("expected 3 statements, got %d", len(got))
 	}
 
+	// Statements must be emitted newest-first (LIFO) so execution undoes the
+	// most recent change first.
 	wants := []string{
-		"DELETE FROM `users` WHERE `id` = 1 LIMIT 1;",
-		"DELETE FROM `users` WHERE `id` = 2 LIMIT 1;",
 		"INSERT INTO `users` (`id`, `name`) VALUES (3, 'Carol');",
+		"DELETE FROM `users` WHERE `id` = 2 LIMIT 1;",
+		"DELETE FROM `users` WHERE `id` = 1 LIMIT 1;",
+	}
+	for i := range wants {
+		if got[i] != wants[i] {
+			t.Errorf("statement %d = %q, want %q", i, got[i], wants[i])
+		}
+	}
+}
+
+// TestReverseSQLBatch_DependentEvents reproduces the delete-then-reinsert cycle:
+// a row is deleted and later re-inserted. Executing the reverse SQL forward
+// would INSERT the row while it is still present (duplicate primary key); the
+// batch must undo the re-INSERT (DELETE) first, then restore the original row.
+func TestReverseSQLBatch_DependentEvents(t *testing.T) {
+	events := []connector.RowEvent{
+		{
+			Type:   connector.DeleteEvent,
+			Table:  "base_district",
+			Before: map[string]interface{}{"code": "1", "name": "Edwin Cook"},
+		},
+		{
+			Type:  connector.InsertEvent,
+			Table: "base_district",
+			After: map[string]interface{}{"code": "1", "name": "Edwin Cook"},
+		},
+	}
+
+	got, err := ReverseSQLBatch(events, []string{"code"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wants := []string{
+		"DELETE FROM `base_district` WHERE `code` = '1' LIMIT 1;",
+		"INSERT INTO `base_district` (`code`, `name`) VALUES ('1', 'Edwin Cook');",
+	}
+	if len(got) != len(wants) {
+		t.Fatalf("expected %d statements, got %d: %v", len(wants), len(got), got)
 	}
 	for i := range wants {
 		if got[i] != wants[i] {
