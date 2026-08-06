@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -771,8 +772,17 @@ func (h *Handler) runOperation(op *Operation, operator string) {
 		return
 	}
 	if parseRes.TotalRows == 0 {
-		h.failOperation(op, "no row events found for table %q before %s",
-			op.TargetTable, op.RecoveryTime.Format(time.RFC3339))
+		// Include the binlog files the agent actually parsed so users can tell
+		// a too-early recovery time (events exist but after the stop time) from
+		// missing/purged binlogs (no files or files don't cover the range).
+		files := "none available"
+		if op.PreflightRes != nil && len(op.PreflightRes.BinlogFiles) > 0 {
+			files = strings.Join(op.PreflightRes.BinlogFiles, ", ")
+		}
+		h.failOperation(op,
+			"no row events found for table %q before %s (binlog files parsed: %s; "+
+				"if the table was modified after the recovery time, pick a later recovery time)",
+			op.TargetTable, op.RecoveryTime.Format(time.RFC3339), files)
 		return
 	}
 

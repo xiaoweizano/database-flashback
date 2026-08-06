@@ -115,10 +115,7 @@ func RunFlashback(ctx context.Context, opts FlashbackOptions) error {
 	}
 	log.Printf("MySQL data directory: %s", dataDir)
 
-	paths := make([]string, 0, len(binlogNames))
-	for _, name := range binlogNames {
-		paths = append(paths, dataDir+name)
-	}
+	paths := binlogPaths(dataDir, binlogNames)
 
 	// ---- Parse binlogs via mysqlbinlog ----
 	parseRes, err := mysqlbinlogParse(connCfg, paths, binlogParseOpts{
@@ -240,6 +237,17 @@ func resolveDataDir(cfg connector.ConnConfig) (string, error) {
 	return value, nil
 }
 
+// binlogPaths joins a binlog directory with file names. The directory may or
+// may not end with a path separator (the agent config's binlog_dir field is
+// written without one, e.g. "/var/lib/mysql"); filepath.Join handles both.
+func binlogPaths(dataDir string, names []string) []string {
+	paths := make([]string, 0, len(names))
+	for _, n := range names {
+		paths = append(paths, filepath.Join(dataDir, n))
+	}
+	return paths
+}
+
 // mysqlbinlogParse is the parse entry point used by RunFlashback. It is a
 // package-level variable so tests can substitute a fake.
 var mysqlbinlogParse = parseBinlogWithMySQLBinlog
@@ -253,6 +261,16 @@ type binlogParseOpts struct {
 	StartPos        uint32
 	StopPos         uint32
 	MySQLBinlogPath string
+}
+
+// mysqlbinlogDateTime formats a UTC instant for mysqlbinlog's
+// --start-datetime/--stop-datetime arguments. mysqlbinlog interprets these
+// strings in the LOCAL timezone of the machine it runs on (converting them to
+// UTC for comparison with event timestamps), so the instant must be expressed
+// in the local zone first — otherwise the effective stop time drifts by the
+// local UTC offset.
+func mysqlbinlogDateTime(t time.Time) string {
+	return t.In(time.Local).Format("2006-01-02 15:04:05")
 }
 
 // parseBinlogWithMySQLBinlog uses the mysqlbinlog tool to parse binlog files
@@ -276,10 +294,10 @@ func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, opts b
 		"--verbose",
 	}
 	if opts.StartTime != nil {
-		args = append(args, "--start-datetime="+opts.StartTime.Format("2006-01-02 15:04:05"))
+		args = append(args, "--start-datetime="+mysqlbinlogDateTime(*opts.StartTime))
 	}
 	if opts.EndTime != nil {
-		args = append(args, "--stop-datetime="+opts.EndTime.Format("2006-01-02 15:04:05"))
+		args = append(args, "--stop-datetime="+mysqlbinlogDateTime(*opts.EndTime))
 	}
 	if opts.StartPos > 0 {
 		args = append(args, fmt.Sprintf("--start-position=%d", opts.StartPos))
@@ -371,7 +389,16 @@ func parseBinlogWithMySQLBinlog(cfg connector.ConnConfig, paths []string, opts b
 	if inRow && len(values) > 0 {
 		events = append(events, makeRowEvent(evType, parts[0], parts[1], values, colNames))
 	}
-	cmd.Wait()
+	waitErr := cmd.Wait()
+	if waitErr != nil && len(events) == 0 {
+		// A failed mysqlbinlog run (e.g. missing/unreadable binlog file)
+		// silently yields zero events; surface it instead of reporting
+		// "no row events found".
+		return nil, fmt.Errorf("mysqlbinlog failed: %w", waitErr)
+	}
+	if waitErr != nil {
+		log.Printf("mysqlbinlog exited with error after parsing %d event(s): %v", len(events), waitErr)
+	}
 
 	log.Printf("mysqlbinlog parsed %d row event(s) for %s", len(events), opts.TargetTable)
 	return &connector.ParseResult{Events: events, TotalRows: int64(len(events))}, nil

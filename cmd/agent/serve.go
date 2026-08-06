@@ -267,10 +267,7 @@ func (d *serveDaemon) handlePITRParse(ctx context.Context, cmd ws.Command) *ws.R
 		}
 		dataDir = dir
 	}
-	paths := make([]string, 0, len(selected))
-	for _, name := range selected {
-		paths = append(paths, dataDir+name)
-	}
+	paths := binlogPaths(dataDir, selected)
 
 	parseRes, err := parseBinlogWithMySQLBinlog(d.connCfg, paths, opts)
 	if err != nil {

@@ -458,3 +458,50 @@ func TestRunFlashback_ParseError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "parse binlogs")
 }
+
+// ---------------------------------------------------------------------------
+// Test: mysqlbinlog datetime formatting (timezone handling)
+// ---------------------------------------------------------------------------
+
+func TestMysqlbinlogDateTime(t *testing.T) {
+	old := time.Local
+	defer func() { time.Local = old }()
+
+	utc := time.Date(2026, 8, 6, 5, 42, 29, 0, time.UTC)
+
+	// The instant must be expressed in the machine's local zone: mysqlbinlog
+	// interprets --stop-datetime strings in local time.
+	time.Local = time.FixedZone("UTC+8", 8*3600)
+	assert.Equal(t, "2026-08-06 13:42:29", mysqlbinlogDateTime(utc))
+
+	time.Local = time.UTC
+	assert.Equal(t, "2026-08-06 05:42:29", mysqlbinlogDateTime(utc))
+
+	time.Local = time.FixedZone("UTC-5", -5*3600)
+	assert.Equal(t, "2026-08-06 00:42:29", mysqlbinlogDateTime(utc))
+}
+
+// ---------------------------------------------------------------------------
+// Test: binlog path joining (trailing-slash tolerance)
+// ---------------------------------------------------------------------------
+
+func TestBinlogPaths(t *testing.T) {
+	names := []string{"mysql-bin.000001", "mysql-bin.000002"}
+	join := func(dir, name string) string { return filepath.Join(dir, name) }
+
+	// Directory without trailing slash (as written by the provision config)
+	// must still produce valid paths — the previous dataDir+name concat
+	// produced "/var/lib/mysqlmysql-bin.000001".
+	got := binlogPaths("/var/lib/mysql", names)
+	assert.Equal(t, []string{
+		join("/var/lib/mysql", "mysql-bin.000001"),
+		join("/var/lib/mysql", "mysql-bin.000002"),
+	}, got)
+
+	// Trailing slash (as returned by resolveDataDir) keeps working.
+	got = binlogPaths("/var/log/mysql/", names)
+	assert.Equal(t, []string{
+		join("/var/log/mysql", "mysql-bin.000001"),
+		join("/var/log/mysql", "mysql-bin.000002"),
+	}, got)
+}

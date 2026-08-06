@@ -74,12 +74,18 @@ export default function PITRWizardPage() {
     [agentsQuery.data],
   );
 
-  // Fetch operation status (polling for steps 2-4)
+  // Fetch operation status (polling for steps 2-4; stops once the operation
+  // reaches a terminal state so a failed/cancelled op doesn't poll forever)
   const statusQuery = useQuery({
     queryKey: ['pitr-status', operationId],
     queryFn: () => getPITRStatus(operationId!),
     enabled: !!operationId && currentStep >= 2 && currentStep <= 4,
-    refetchInterval: currentStep >= 2 && currentStep <= 4 ? 1500 : false,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      if (!operationId || currentStep < 2 || currentStep > 4) return false;
+      if (state === 'completed' || state === 'failed' || state === 'cancelled') return false;
+      return 1500;
+    },
   });
 
   const operation: PITROperation | undefined = statusQuery.data;
@@ -89,7 +95,12 @@ export default function PITRWizardPage() {
     queryKey: ['pitr-progress', operationId],
     queryFn: () => getPITRProgress(operationId!),
     enabled: !!operationId && currentStep === 4,
-    refetchInterval: currentStep === 4 ? 2000 : false,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      if (!operationId || currentStep !== 4) return false;
+      if (state === 'completed' || state === 'failed' || state === 'cancelled') return false;
+      return 2000;
+    },
   });
 
   const progress: ProgressData | undefined = progressQuery.data;
@@ -140,8 +151,16 @@ export default function PITRWizardPage() {
 
   const handleBack = useCallback(() => {
     if (currentStep > 0) {
-      // If going back from executing steps, cancel the operation
+      // If going back from executing steps, cancel the operation — unless it
+      // already reached a terminal state (failed/cancelled/completed), where
+      // canceling would be rejected by the backend.
       if (currentStep >= 2 && operationId) {
+        const state = operation?.state;
+        if (state === 'failed' || state === 'cancelled' || state === 'completed') {
+          setOperationId(null);
+          setCurrentStep(currentStep - 1);
+          return;
+        }
         cancelMutation.mutate(undefined, {
           onSuccess: () => {
             setOperationId(null);
@@ -152,7 +171,7 @@ export default function PITRWizardPage() {
       }
       setCurrentStep(currentStep - 1);
     }
-  }, [currentStep, operationId, cancelMutation]);
+  }, [currentStep, operationId, operation, cancelMutation]);
 
   const handleNextFromStep1 = useCallback(() => {
     if (!selectedAgentId || !targetTable || !recoveryTime) {
@@ -171,6 +190,7 @@ export default function PITRWizardPage() {
 
   const isCompleted = operation?.state === 'completed';
   const isFailed = operation?.state === 'failed' || operation?.state === 'cancelled';
+  const isTerminal = isCompleted || isFailed;
 
   // ---- Step Renderers ----
 
@@ -333,6 +353,20 @@ export default function PITRWizardPage() {
       return <Empty description={t('common.noData')} />;
     }
 
+    if (op.state === 'failed' || op.state === 'cancelled') {
+      return (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <CloseCircleOutlined style={{ fontSize: 64, color: '#ff4d4f' }} />
+          <Title level={4} style={{ marginTop: 16 }}>
+            {op.state === 'cancelled' ? t('pitr.operationCancelled') : t('pitr.operationFailed')}
+          </Title>
+          {op.error && (
+            <Alert type="error" message={op.error} showIcon style={{ maxWidth: 600, margin: '16px auto' }} />
+          )}
+        </div>
+      );
+    }
+
     if (op.state === 'preflight') {
       return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" tip={t('pitr.runningPreflight')} /></div>;
     }
@@ -389,6 +423,20 @@ export default function PITRWizardPage() {
     const op = statusQuery.data;
     if (!op) {
       return <Empty description={t('common.noData')} />;
+    }
+
+    if (op.state === 'failed' || op.state === 'cancelled') {
+      return (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <CloseCircleOutlined style={{ fontSize: 64, color: '#ff4d4f' }} />
+          <Title level={4} style={{ marginTop: 16 }}>
+            {op.state === 'cancelled' ? t('pitr.operationCancelled') : t('pitr.operationFailed')}
+          </Title>
+          {op.error && (
+            <Alert type="error" message={op.error} showIcon style={{ maxWidth: 600, margin: '16px auto' }} />
+          )}
+        </div>
+      );
     }
 
     const parseRes = op.parseResult;
@@ -537,7 +585,7 @@ export default function PITRWizardPage() {
             )}
           </Space>
           <Space>
-            <Button icon={<CloseCircleOutlined />} onClick={handleCancel} disabled={cancelMutation.isPending}>
+            <Button icon={<CloseCircleOutlined />} onClick={handleCancel} disabled={cancelMutation.isPending || isTerminal}>
               {t('common.cancel')}
             </Button>
             {currentStep === 0 && (
