@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/a-shan/mysql-pitr/internal/config"
+	"github.com/a-shan/mysql-pitr/internal/connector"
 	"github.com/a-shan/mysql-pitr/internal/ws"
 )
 
@@ -156,4 +160,37 @@ func TestHandleStatus_ReportsMySQLConnectivity(t *testing.T) {
 	require.True(t, ok)
 	// No MySQL is reachable in the test environment.
 	assert.Equal(t, false, mysql["connected"])
+}
+
+// ---------------------------------------------------------------------------
+// friendlyConnError — MySQL 1045 translation
+// ---------------------------------------------------------------------------
+
+func TestFriendlyConnError_AccessDenied(t *testing.T) {
+	cfg := connector.ConnConfig{User: "pitr", Database: "zlmy"}
+	raw := &mysql.MySQLError{
+		Number:  1045,
+		Message: "Access denied for user 'pitr'@'172.19.0.3' (using password: YES)",
+	}
+	err := fmt.Errorf("connector: ping failed: %w", raw)
+
+	got := friendlyConnError(cfg, err)
+	require.Error(t, got)
+	assert.Contains(t, got.Error(), "pitr")
+	assert.Contains(t, got.Error(), "zlmy")
+	assert.Contains(t, got.Error(), "172.19.0.3")
+	assert.Contains(t, got.Error(), "CREATE USER")
+	assert.Contains(t, got.Error(), "GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT")
+	assert.Contains(t, got.Error(), "FLUSH PRIVILEGES")
+}
+
+func TestFriendlyConnError_OtherErrorsPassthrough(t *testing.T) {
+	cfg := connector.ConnConfig{User: "pitr", Database: "zlmy"}
+
+	refused := errors.New("dial tcp 127.0.0.1:3306: connect: connection refused")
+	assert.Same(t, refused, friendlyConnError(cfg, refused))
+
+	// A non-1045 MySQL error (e.g. unknown database) is also left untouched.
+	unknownDB := &mysql.MySQLError{Number: 1049, Message: "Unknown database 'zlmy'"}
+	assert.Same(t, unknownDB, friendlyConnError(cfg, unknownDB))
 }

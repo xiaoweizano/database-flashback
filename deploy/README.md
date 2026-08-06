@@ -72,6 +72,11 @@ This starts:
 - **server** — web dashboard + API (`localhost:8080`) and the mTLS agent
   endpoint (`localhost:9443`)
 
+> **Default web login** — the provision step registers a fixed account and
+> creates an org for it; log in at `http://localhost:8080` with
+> `e2e-provision@example.com` / `e2e-pass-123` to see the agent. The
+> credentials are hardcoded in `scripts/e2e-provision.sh`.
+
 ### Host MySQL setup
 
 The agent connects to MySQL on the host via `host.docker.internal` and reads
@@ -369,6 +374,7 @@ GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/mysql-pitr-agent-linux-
 | Problem | Likely cause | Fix |
 |---|---|---|
 | Agent can't connect to MySQL | Wrong credentials or network | Check `mysql` fields in the encrypted config; MySQL must be reachable from the agent host |
+| `Access denied for user 'xxx'@'172.x.x.x' (using password: YES)` | MySQL account not granted for the Docker bridge network (only `'xxx'@'localhost'` exists) | On the MySQL host: `CREATE USER 'xxx'@'%' IDENTIFIED BY '<password>'; GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'xxx'@'%'; GRANT SELECT ON \`db\`.* TO 'xxx'@'%'; FLUSH PRIVILEGES;` |
 | Agent won't connect to the server | mTLS trust mismatch | Certificates must be signed by the server's internal CA (`AGENT_DATA_DIR/ca.json`); `server.url` hostname must match the server cert SAN (`AGENT_CERT_HOSTS`) |
 | Agent connects but stays unapproved | Register flow not completed | Approve the agent in the web console (Agents page) |
 | PITR start fails "agent is offline" | Agent not running/connected | Run `mysql-pitr-agent serve --config=... --passphrase=...`; check `journalctl -u agent` |

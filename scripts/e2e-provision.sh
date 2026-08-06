@@ -123,4 +123,22 @@ mysql-pitr-agent config encrypt \
 
 rm -f "$CONFIG_DIR/plain.json" "$CONFIG_DIR/ca-key.pem" "$CONFIG_DIR/ca-key.pem.srl"
 
+# Verify the MySQL account the agent will use. The agent connects from the
+# Docker network (source IP is a container address), so 'user'@'localhost'
+# is not enough — catch that here instead of at PITR time.
+echo "[provision] verifying MySQL connectivity as '$MYSQL_USER'..."
+if ! mysqladmin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --silent; then
+  echo "[provision] ERROR: cannot connect to MySQL at $MYSQL_HOST:$MYSQL_PORT as user '$MYSQL_USER'."
+  echo "[provision] The agent needs a MySQL account allowed from the Docker network."
+  echo "[provision] On the MySQL host, run as root:"
+  echo "  CREATE USER IF NOT EXISTS '$MYSQL_USER'@'%' IDENTIFIED BY '<password>';"
+  echo "  ALTER USER '$MYSQL_USER'@'%' IDENTIFIED BY '<password>';   # if the user already exists"
+  echo "  GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '$MYSQL_USER'@'%';"
+  echo "  GRANT SELECT ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'%';"
+  echo "  FLUSH PRIVILEGES;"
+  echo "[provision] and make sure MYSQL_USER/MYSQL_PASSWORD in .env match."
+  exit 1
+fi
+echo "[provision] MySQL connectivity OK"
+
 echo "[provision] done — agent $AGENT_ID ready to start"

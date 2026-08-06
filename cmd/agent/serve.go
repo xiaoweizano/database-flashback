@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 
 	"github.com/a-shan/mysql-pitr/internal/checkpoint"
@@ -124,6 +126,23 @@ func buildBinlogParseOpts(params map[string]interface{}, cfg *config.Config) (bi
 // Handlers
 // ---------------------------------------------------------------------------
 
+// friendlyConnError rewrites MySQL 1045 (access denied) into an actionable
+// message. The agent connects from a container/bridge network, so a MySQL user
+// created for 'localhost' only is rejected even with the correct password.
+func friendlyConnError(cfg connector.ConnConfig, err error) error {
+	var me *mysql.MySQLError
+	if errors.As(err, &me) && me.Number == 1045 {
+		return fmt.Errorf(
+			"MySQL access denied (user %q, database %q): %s. "+
+				"The MySQL account must be allowed from this agent's host. "+
+				"On the MySQL server run: CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '<password>'; "+
+				"GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '%s'@'%%'; "+
+				"GRANT SELECT ON `%s`.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+			cfg.User, cfg.Database, me.Message, cfg.User, cfg.User, cfg.Database, cfg.User)
+	}
+	return err
+}
+
 // handleStatus answers the `status` command with daemon and MySQL connectivity.
 func (d *serveDaemon) handleStatus(ctx context.Context, cmd ws.Command) *ws.Response {
 	return okResp(cmd, map[string]interface{}{
@@ -138,7 +157,7 @@ func (d *serveDaemon) checkMySQL(ctx context.Context) map[string]interface{} {
 	conn := connector.NewMySQLConnector()
 	defer conn.Close()
 	if err := conn.Connect(d.connCfg); err != nil {
-		return map[string]interface{}{"connected": false, "error": err.Error()}
+		return map[string]interface{}{"connected": false, "error": friendlyConnError(d.connCfg, err).Error()}
 	}
 	return map[string]interface{}{
 		"connected": true,
@@ -163,7 +182,7 @@ func (d *serveDaemon) handleShutdown(ctx context.Context, cmd ws.Command) *ws.Re
 func (d *serveDaemon) handlePreflight(ctx context.Context, cmd ws.Command) *ws.Response {
 	conn := connector.NewMySQLConnector()
 	if err := conn.Connect(d.connCfg); err != nil {
-		return errResp(cmd, "connect to MySQL: %v", err)
+		return errResp(cmd, "connect to MySQL: %v", friendlyConnError(d.connCfg, err))
 	}
 	defer conn.Close()
 
@@ -225,7 +244,7 @@ func (d *serveDaemon) handlePITRParse(ctx context.Context, cmd ws.Command) *ws.R
 	if len(selected) == 0 {
 		conn := connector.NewMySQLConnector()
 		if err := conn.Connect(d.connCfg); err != nil {
-			return errResp(cmd, "connect to MySQL: %v", err)
+			return errResp(cmd, "connect to MySQL: %v", friendlyConnError(d.connCfg, err))
 		}
 		binlogs, err := conn.GetBinlogFiles(ctx)
 		_ = conn.Close()
