@@ -282,13 +282,24 @@ export default function PITRWizardPage() {
           onChange={(e) => setTargetTable(e.target.value)}
         />
       </Form.Item>
-      <Form.Item label={t('pitr.recoveryTime')} required>
-        <DatePicker
-          showTime
-          style={{ width: '100%' }}
-          value={recoveryTime ? dayjs(recoveryTime) : null}
-          onChange={(date) => setRecoveryTime(date ? date.toISOString() : '')}
-        />
+      <Form.Item label={t('pitr.timeRange')} required help={t('pitr.timeRangeHelp')}>
+        <Space size="small" style={{ display: 'flex' }}>
+          <DatePicker
+            showTime
+            placeholder={t('pitr.startTimePlaceholder')}
+            style={{ width: '100%' }}
+            value={startTime ? dayjs(startTime) : null}
+            onChange={(date) => setStartTime(date ? date.toISOString() : '')}
+          />
+          <span style={{ color: '#9ca3af' }}>~</span>
+          <DatePicker
+            showTime
+            placeholder={t('pitr.recoveryTimePlaceholder')}
+            style={{ width: '100%' }}
+            value={recoveryTime ? dayjs(recoveryTime) : null}
+            onChange={(date) => setRecoveryTime(date ? date.toISOString() : '')}
+          />
+        </Space>
       </Form.Item>
       <Card size="small" title={t('pitr.parseTargeting')} style={{ marginBottom: 24 }}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
@@ -299,14 +310,6 @@ export default function PITRWizardPage() {
             placeholder={t('pitr.binlogFilesPlaceholder')}
             value={binlogFiles}
             onChange={(e) => setBinlogFiles(e.target.value)}
-          />
-        </Form.Item>
-        <Form.Item label={t('pitr.startTime')} help={t('pitr.startTimeHelp')}>
-          <DatePicker
-            showTime
-            style={{ width: '100%' }}
-            value={startTime ? dayjs(startTime) : null}
-            onChange={(date) => setStartTime(date ? date.toISOString() : '')}
           />
         </Form.Item>
         <Space size="large">
@@ -508,13 +511,21 @@ export default function PITRWizardPage() {
               </Space>
             }
           >
-            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-              {isExecuting
-                ? t('pitr.executingDesc')
-                : isCompleted
-                  ? t('pitr.executedDesc')
-                  : t('pitr.selectSqlHint')}
-            </Text>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text type="secondary">
+                {isExecuting
+                  ? t('pitr.executingDesc')
+                  : isCompleted
+                    ? t('pitr.executedDesc')
+                    : t('pitr.selectSqlHint')}
+              </Text>
+              {!selectionDisabled && (
+                <Space size="small">
+                  <a onClick={() => setSelected(reverseSql.map((_, i) => i))}>{t('pitr.selectAll')}</a>
+                  <a onClick={() => setSelected([])}>{t('pitr.selectNone')}</a>
+                </Space>
+              )}
+            </div>
             {isExecuting && (
               <Card size="small" style={{ marginBottom: 12, background: '#fafafa' }}>
                 <Descriptions column={2} size="small">

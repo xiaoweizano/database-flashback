@@ -798,3 +798,35 @@ func TestExecute_NoAuth(t *testing.T) {
 	f.handler.Execute(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
+
+// TestStart_WithStartTime verifies the optional start_time flows through to the
+// agent's parse command, so the recovery window can be narrowed to a time range.
+func TestStart_WithStartTime(t *testing.T) {
+	f := setupTest(t)
+	userID := f.createUser(t)
+	orgID := f.createOrg(t, userID)
+	agentID := f.createAgent(t, orgID)
+
+	req := f.authenticatedRequest(t, http.MethodPost, "/api/pitr/start", startRequest{
+		AgentID:      agentID,
+		TargetTable:  "orders",
+		RecoveryTime: "2026-07-08T14:00:00Z",
+		StartTime:    "2026-07-08T13:00:00Z",
+		Mode:         "preview",
+	}, userID)
+	w := httptest.NewRecorder()
+	f.handler.Start(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp startResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	op := waitForOperationState(t, f.opStore, resp.OperationID,
+		[]OperationState{StatePreviewed, StateCompleted, StateFailed, StateCancelled}, 5*time.Second)
+	require.Equal(t, StatePreviewed, op.State)
+
+	require.Len(t, f.commander.sent, 2) // preflight, parse
+	parseCmd := f.commander.sent[1]
+	assert.Equal(t, ws.CmdPITRParse, parseCmd.Type)
+	assert.Equal(t, "2026-07-08T13:00:00Z", parseCmd.Params["startTime"])
+	assert.Equal(t, "2026-07-08T14:00:00Z", parseCmd.Params["endTime"])
+}
